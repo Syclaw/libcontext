@@ -1,0 +1,131 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "libcontext"
+version = "0.1.0"
+description = "Generate optimized LLM context from Python library APIs for GitHub Copilot"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Jonathan VARELA" },
+]
+urls = { Homepage = "https://github.com/Syclaw/libcontext", Repository = "https://github.com/Syclaw/libcontext", Issues = "https://github.com/Syclaw/libcontext/issues" }
+keywords = ["copilot", "context", "documentation", "ast", "introspection"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "click>=8.0",
+    "tomli>=1.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+libctx = "libcontext.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/libcontext"]
+
+[tool.libcontext]
+# Configuration example for this package itself
+include_modules = []
+exclude_modules = []
+include_private = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter & formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific rules
+    "C4",     # flake8-comprehensions
+    "PTH",    # flake8-use-pathlib
+    "TCH",    # flake8-type-checking
+    "ANN",    # flake8-annotations
+    "D",      # pydocstyle
+]
+ignore = [
+    "ANN401",  # Dynamically typed expressions (typing.Any)
+    "D100",    # missing docstring in public module (covered at package level)
+    "D104",    # missing docstring in public package
+    "D107",    # missing docstring in __init__ (use class docstring)
+    "D203",    # 1 blank line before class docstring (conflicts with D211)
+    "D213",    # multi-line summary second line (conflicts with D212)
+    "TC001",   # move app import into TYPE_CHECKING (breaks runtime)
+    "TC003",   # move stdlib import into TYPE_CHECKING (breaks runtime)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "D", "S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["libcontext"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# ---------------------------------------------------------------------------
+# Mypy — static type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+strict_equality = true
+extra_checks = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+show_error_codes = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "tomli"
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.1",
+]
