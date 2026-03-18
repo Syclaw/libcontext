@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-18
+
 ### Added
 
 - Progressive disclosure CLI flags: `--overview`, `--module`, `--search` for on-demand API inspection.
@@ -45,5 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Free-form `extra_context` field for library authors.
 - Python API for programmatic usage (`collect_package`, `render_package`).
 
-[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Syclaw/libcontext/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Syclaw/libcontext/releases/tag/v0.1.0
