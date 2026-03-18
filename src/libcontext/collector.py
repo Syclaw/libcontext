@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 
 from .config import LibcontextConfig, find_config_for_package
+from .exceptions import InspectionError, PackageNotFoundError
 from .inspector import inspect_file
 from .models import ModuleInfo, PackageInfo
 
@@ -164,12 +165,8 @@ def _walk_package(
         try:
             mod = inspect_file(package_path, module_name=package_name)
             modules.append(mod)
-        except SyntaxError as exc:
-            logger.warning("Syntax error in %s: %s", package_path, exc)
-        except UnicodeDecodeError as exc:
-            logger.warning("Encoding error in %s: %s", package_path, exc)
-        except OSError as exc:
-            logger.warning("Cannot read %s: %s", package_path, exc)
+        except (SyntaxError, UnicodeDecodeError, OSError) as exc:
+            raise InspectionError(str(package_path), str(exc)) from exc
         return modules
 
     include_set = set(config.include_modules) if config.include_modules else None
@@ -204,12 +201,13 @@ def _walk_package(
         try:
             mod = inspect_file(py_file, module_name=module_name)
             modules.append(mod)
-        except SyntaxError as exc:
-            logger.warning("Syntax error in %s: %s", py_file, exc)
-        except UnicodeDecodeError as exc:
-            logger.warning("Encoding error in %s: %s", py_file, exc)
-        except OSError as exc:
-            logger.warning("Cannot read %s: %s", py_file, exc)
+        except (SyntaxError, UnicodeDecodeError, OSError) as exc:
+            logger.warning(
+                "Skipped %s: %s",
+                py_file,
+                exc,
+            )
+            continue
 
     return modules
 
@@ -241,7 +239,8 @@ def collect_package(
         :class:`~libcontext.models.PackageInfo` with all collected data.
 
     Raises:
-        ValueError: If the package cannot be located.
+        PackageNotFoundError: If the package cannot be located.
+        InspectionError: If a single-file module cannot be parsed or read.
     """
     # --- Resolve path --------------------------------------------------
     path = Path(package_name)
@@ -253,10 +252,7 @@ def collect_package(
     else:
         pkg_path_resolved = find_package_path(package_name)
         if pkg_path_resolved is None:
-            raise ValueError(
-                f"Package '{package_name}' not found. "
-                "Make sure it is installed in the current environment."
-            )
+            raise PackageNotFoundError(package_name)
         pkg_path = pkg_path_resolved
         pkg_name = package_name
         metadata = _get_package_metadata(package_name)

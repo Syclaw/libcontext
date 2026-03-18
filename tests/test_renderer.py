@@ -10,7 +10,12 @@ from libcontext.models import (
     ParameterInfo,
     VariableInfo,
 )
-from libcontext.renderer import inject_into_file, render_package
+from libcontext.renderer import (
+    inject_into_file,
+    render_module,
+    render_package,
+    render_package_overview,
+)
 
 
 def _make_simple_package() -> PackageInfo:
@@ -310,3 +315,149 @@ def test_inject_end_before_begin_does_not_cross():
     assert result.index("<!-- BEGIN LIBCONTEXT: mylib -->") < result.index(
         "<!-- END LIBCONTEXT: mylib -->"
     )
+
+
+# ---------------------------------------------------------------------------
+# render_module (public API)
+# ---------------------------------------------------------------------------
+
+
+def test_render_module_standalone():
+    """render_module produces a self-contained Markdown section."""
+    module = ModuleInfo(
+        name="mylib.api",
+        docstring="Public API surface.",
+        classes=[
+            ClassInfo(
+                name="Session",
+                bases=["BaseSession"],
+                docstring="Manages connections.",
+                methods=[
+                    FunctionInfo(
+                        name="__init__",
+                        parameters=[
+                            ParameterInfo(name="self"),
+                            ParameterInfo(name="url", annotation="str"),
+                        ],
+                        docstring="Create a session.",
+                    ),
+                    FunctionInfo(
+                        name="close",
+                        parameters=[ParameterInfo(name="self")],
+                        return_annotation="None",
+                        docstring="Close the session.",
+                    ),
+                ],
+            ),
+        ],
+        functions=[
+            FunctionInfo(
+                name="get",
+                parameters=[ParameterInfo(name="url", annotation="str")],
+                return_annotation="Response",
+                docstring="Send a GET request.",
+            ),
+        ],
+    )
+
+    output = render_module(module)
+
+    assert "### `mylib.api`" in output
+    assert "Public API surface." in output
+    assert "class Session(BaseSession)" in output
+    assert "Manages connections." in output
+    assert "__init__" in output
+    assert "close" in output
+    assert "def get(url: str) -> Response" in output
+
+
+def test_render_module_respects_all_exports():
+    """render_module filters by __all__ when present."""
+    module = ModuleInfo(
+        name="mylib.core",
+        all_exports=["public_func"],
+        classes=[ClassInfo(name="Hidden")],
+        functions=[
+            FunctionInfo(name="public_func", docstring="Visible."),
+            FunctionInfo(name="other_func", docstring="Not in __all__."),
+        ],
+    )
+
+    output = render_module(module)
+
+    assert "public_func" in output
+    assert "other_func" not in output
+    assert "Hidden" not in output
+
+
+def test_render_module_empty():
+    """render_module on an empty module produces only the heading."""
+    module = ModuleInfo(name="mylib.empty")
+    output = render_module(module)
+
+    assert "### `mylib.empty`" in output
+    assert "**Functions:**" not in output
+
+
+# ---------------------------------------------------------------------------
+# render_package_overview
+# ---------------------------------------------------------------------------
+
+
+def test_render_package_overview_structure():
+    """Overview lists modules with class and function names."""
+    pkg = _make_simple_package()
+    output = render_package_overview(pkg)
+
+    assert "# mylib v1.2.3" in output
+    assert "> A test library" in output
+    assert "## Modules" in output
+    assert "**`mylib`**" in output
+    assert "Client" in output
+    assert "create_client()" in output
+
+
+def test_render_package_overview_no_signatures():
+    """Overview must NOT contain full signatures — just names."""
+    pkg = _make_simple_package()
+    output = render_package_overview(pkg)
+
+    assert "base_url: str" not in output
+    assert "-> Response" not in output
+
+
+def test_render_package_overview_empty():
+    """Overview on an empty package shows a placeholder."""
+    pkg = PackageInfo(name="empty", modules=[])
+    output = render_package_overview(pkg)
+
+    assert "# empty" in output
+    assert "*No public modules found.*" in output
+
+
+def test_render_package_overview_respects_all_exports():
+    """Overview filters by __all__ when defined."""
+    pkg = PackageInfo(
+        name="filtered",
+        version="0.1.0",
+        modules=[
+            ModuleInfo(
+                name="filtered.core",
+                all_exports=["Visible"],
+                classes=[
+                    ClassInfo(name="Visible"),
+                    ClassInfo(name="Internal"),
+                ],
+                functions=[
+                    FunctionInfo(name="Visible"),
+                    FunctionInfo(name="hidden_func"),
+                ],
+            ),
+        ],
+    )
+
+    output = render_package_overview(pkg)
+
+    assert "Visible" in output
+    assert "Internal" not in output
+    assert "hidden_func" not in output

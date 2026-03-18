@@ -99,7 +99,12 @@ def _extract_decorators(
     node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
 ) -> list[str]:
     """Extract decorator names from a decorated node."""
-    return [ast.unparse(dec) for dec in node.decorator_list]
+    results: list[str] = []
+    for dec in node.decorator_list:
+        unparsed = _unparse(dec)
+        if unparsed is not None:
+            results.append(unparsed)
+    return results
 
 
 def _extract_parameters(args: ast.arguments) -> list[ParameterInfo]:
@@ -371,6 +376,12 @@ def inspect_file(file_path: Path, module_name: str = "") -> ModuleInfo:
         SyntaxError: If the file contains invalid Python syntax.
         OSError: If the file cannot be read.
         UnicodeDecodeError: If the file is not valid UTF-8.
+
+    Note:
+        These exceptions propagate as-is from this function.
+        :func:`~libcontext.collector.collect_package` wraps them in
+        :class:`~libcontext.exceptions.InspectionError` for single-file
+        modules or logs and skips them for multi-file packages.
     """
     logger.debug(
         "Inspecting file %s (module=%s)",

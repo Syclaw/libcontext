@@ -133,13 +133,15 @@ libcontext/
 │   ├── inspector.py     # AST-based source code inspection
 │   ├── collector.py     # Package discovery and module walking
 │   ├── config.py        # [tool.libcontext] configuration reader
-│   ├── renderer.py      # Markdown generation
-│   └── cli.py           # CLI entry point (click)
+│   ├── renderer.py      # Markdown generation (full, overview, module, search)
+│   ├── cli.py           # CLI entry point — inspect + install subcommands
+│   └── mcp_server.py   # MCP server (optional, requires [mcp] extra)
 ├── tests/
 │   ├── test_cli.py
 │   ├── test_collector.py
 │   ├── test_config.py
 │   ├── test_inspector.py
+│   ├── test_mcp_server.py
 │   └── test_renderer.py
 ├── pyproject.toml
 ├── README.md

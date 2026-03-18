@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -47,7 +48,7 @@ def sample_package(tmp_path: Path) -> Path:
 def test_stdout_output(sample_package: Path) -> None:
     """CLI prints Markdown to stdout by default."""
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package)])
+    result = runner.invoke(main, ["inspect", str(sample_package)])
 
     assert result.exit_code == 0
     assert "API Reference" in result.output
@@ -57,7 +58,7 @@ def test_output_to_file(sample_package: Path, tmp_path: Path) -> None:
     """``-o`` writes Markdown to a file with markers."""
     out_file = tmp_path / "out" / "copilot.md"
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "-o", str(out_file)])
+    result = runner.invoke(main, ["inspect", str(sample_package), "-o", str(out_file)])
 
     assert result.exit_code == 0
     assert out_file.exists()
@@ -73,7 +74,7 @@ def test_output_to_existing_file(sample_package: Path, tmp_path: Path) -> None:
     out_file.write_text("# My Custom Notes\n\nKeep this.\n", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "-o", str(out_file)])
+    result = runner.invoke(main, ["inspect", str(sample_package), "-o", str(out_file)])
 
     assert result.exit_code == 0
     content = out_file.read_text(encoding="utf-8")
@@ -90,7 +91,7 @@ def test_output_to_existing_file(sample_package: Path, tmp_path: Path) -> None:
 def test_quiet_flag(sample_package: Path) -> None:
     """``-q`` suppresses informational messages on stderr."""
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "-q"])
+    result = runner.invoke(main, ["inspect", str(sample_package), "-q"])
 
     assert result.exit_code == 0
     # With -q, no "Inspecting" message in output
@@ -100,7 +101,7 @@ def test_quiet_flag(sample_package: Path) -> None:
 def test_no_readme_flag(sample_package: Path) -> None:
     """``--no-readme`` excludes readme section."""
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "--no-readme"])
+    result = runner.invoke(main, ["inspect", str(sample_package), "--no-readme"])
 
     assert result.exit_code == 0
     assert "## Overview" not in result.output
@@ -119,9 +120,9 @@ def test_include_private_flag(tmp_path: Path) -> None:
     runner = CliRunner()
 
     # Without flag — private skipped
-    result_without = runner.invoke(main, [str(pkg)])
+    result_without = runner.invoke(main, ["inspect", str(pkg)])
     # With flag — private included
-    result_with = runner.invoke(main, [str(pkg), "--include-private"])
+    result_with = runner.invoke(main, ["inspect", str(pkg), "--include-private"])
 
     assert result_without.exit_code == 0
     assert result_with.exit_code == 0
@@ -140,7 +141,7 @@ def test_max_readme_lines(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text(long_readme, encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(pkg), "--max-readme-lines", "5"])
+    result = runner.invoke(main, ["inspect", str(pkg), "--max-readme-lines", "5"])
 
     assert result.exit_code == 0
     assert "Line 4" in result.output
@@ -179,7 +180,7 @@ def test_config_flag(tmp_path: Path) -> None:
     )
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(pkg), "--config", str(pyproject)])
+    result = runner.invoke(main, ["inspect", str(pkg), "--config", str(pyproject)])
 
     assert result.exit_code == 0
     assert "Use this library carefully." in result.output
@@ -202,7 +203,8 @@ def test_config_with_include_private_override(tmp_path: Path) -> None:
 
     runner = CliRunner()
     result = runner.invoke(
-        main, [str(pkg), "--config", str(pyproject), "--include-private"]
+        main,
+        ["inspect", str(pkg), "--config", str(pyproject), "--include-private"],
     )
 
     assert result.exit_code == 0
@@ -216,7 +218,7 @@ def test_config_with_include_private_override(tmp_path: Path) -> None:
 def test_nonexistent_package() -> None:
     """Non-existent package exits with code 1 and error message."""
     runner = CliRunner()
-    result = runner.invoke(main, ["this_package_does_not_exist_xyz"])
+    result = runner.invoke(main, ["inspect", "this_package_does_not_exist_xyz"])
 
     assert result.exit_code == 1
     assert "Error" in result.output or "not found" in result.output
@@ -241,7 +243,9 @@ def test_multiple_packages(tmp_path: Path) -> None:
         )
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(tmp_path / "pkg_a"), str(tmp_path / "pkg_b")])
+    result = runner.invoke(
+        main, ["inspect", str(tmp_path / "pkg_a"), str(tmp_path / "pkg_b")]
+    )
 
     assert result.exit_code == 0
     assert "pkg_a" in result.output
@@ -259,7 +263,13 @@ def test_multiple_packages_to_file(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(
         main,
-        [str(tmp_path / "pkg_x"), str(tmp_path / "pkg_y"), "-o", str(out_file)],
+        [
+            "inspect",
+            str(tmp_path / "pkg_x"),
+            str(tmp_path / "pkg_y"),
+            "-o",
+            str(out_file),
+        ],
     )
 
     assert result.exit_code == 0
@@ -276,7 +286,7 @@ def test_multiple_packages_to_file(tmp_path: Path) -> None:
 def test_stderr_messages(sample_package: Path) -> None:
     """Non-quiet mode prints progress info (mixed into output by default)."""
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package)])
+    result = runner.invoke(main, ["inspect", str(sample_package)])
 
     assert result.exit_code == 0
     # Click mixes stderr into output by default in CliRunner
@@ -288,7 +298,7 @@ def test_file_output_stderr_message(sample_package: Path, tmp_path: Path) -> Non
     """Writing to file prints 'Context written to ...' message."""
     out_file = tmp_path / "out.md"
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "-o", str(out_file)])
+    result = runner.invoke(main, ["inspect", str(sample_package), "-o", str(out_file)])
 
     assert result.exit_code == 0
     assert "Context written to" in result.output
@@ -311,7 +321,7 @@ def test_stdout_buffer_not_detached(tmp_path: Path) -> None:
 
     runner = CliRunner()
     with patch("sys.stdout", fake_stdout):
-        result = runner.invoke(main, [str(pkg)])
+        result = runner.invoke(main, ["inspect", str(pkg)])
 
     assert result.exit_code == 0
 
@@ -333,7 +343,7 @@ def test_cli_stdout_no_exception(tmp_path: Path) -> None:
     )
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(pkg)])
+    result = runner.invoke(main, ["inspect", str(pkg)])
 
     assert result.exit_code == 0
     assert result.exception is None
@@ -350,7 +360,7 @@ def test_output_file_read_non_utf8(sample_package: Path, tmp_path: Path) -> None
     out_file.write_bytes(b"# Bad \xe9ncoding\n")
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "-o", str(out_file)])
+    result = runner.invoke(main, ["inspect", str(sample_package), "-o", str(out_file)])
 
     assert result.exit_code == 1
     assert "not valid UTF-8" in result.output
@@ -364,7 +374,9 @@ def test_output_file_write_permission_error(
 
     runner = CliRunner()
     with patch.object(Path, "write_text", side_effect=OSError("Permission denied")):
-        result = runner.invoke(main, [str(sample_package), "-o", str(out_file)])
+        result = runner.invoke(
+            main, ["inspect", str(sample_package), "-o", str(out_file)]
+        )
 
     assert result.exit_code == 1
     assert "cannot write" in result.output
@@ -386,7 +398,7 @@ def test_bad_config_type_error(tmp_path: Path) -> None:
     )
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(pkg), "--config", str(pyproject)])
+    result = runner.invoke(main, ["inspect", str(pkg), "--config", str(pyproject)])
 
     assert result.exit_code == 1
     assert "config" in result.output.lower()
@@ -395,6 +407,280 @@ def test_bad_config_type_error(tmp_path: Path) -> None:
 def test_verbose_flag(sample_package: Path) -> None:
     """``--verbose`` enables debug logging without crashing."""
     runner = CliRunner()
-    result = runner.invoke(main, [str(sample_package), "-v"])
+    result = runner.invoke(main, ["inspect", str(sample_package), "-v"])
 
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# install subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_install_skills_claude(tmp_path: Path) -> None:
+    """``libctx install --skills`` creates .claude/skills/lib/SKILL.md."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--skills"])
+
+        assert result.exit_code == 0
+        skill = Path(".claude/skills/lib/SKILL.md")
+        assert skill.exists()
+
+        content = skill.read_text(encoding="utf-8")
+        assert "name: lib" in content
+        assert "libctx" in content
+        assert "Progressive API Discovery" in content
+
+
+def test_install_skills_github(tmp_path: Path) -> None:
+    """``libctx install --skills --target github`` uses .github/skills/."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--skills", "--target", "github"])
+
+        assert result.exit_code == 0
+        skill = Path(".github/skills/lib/SKILL.md")
+        assert skill.exists()
+
+        content = skill.read_text(encoding="utf-8")
+        assert "name: lib" in content
+
+
+def test_install_skills_idempotent(tmp_path: Path) -> None:
+    """Running install twice overwrites cleanly."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        runner.invoke(main, ["install", "--skills"])
+        result = runner.invoke(main, ["install", "--skills"])
+
+        assert result.exit_code == 0
+        skill = Path(".claude/skills/lib/SKILL.md")
+        assert skill.exists()
+
+
+def test_install_requires_flag() -> None:
+    """``libctx install`` without any flag errors."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["install"])
+
+    assert result.exit_code != 0
+    assert "specify at least one" in result.output
+
+
+# ---------------------------------------------------------------------------
+# install --mcp
+# ---------------------------------------------------------------------------
+
+
+def test_install_mcp_claude(tmp_path: Path) -> None:
+    """``libctx install --mcp`` creates .mcp.json with mcpServers entry."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--mcp"])
+
+        assert result.exit_code == 0
+        mcp_file = Path(".mcp.json")
+        assert mcp_file.exists()
+
+        data = json.loads(mcp_file.read_text(encoding="utf-8"))
+        assert "mcpServers" in data
+        assert "libcontext" in data["mcpServers"]
+        assert data["mcpServers"]["libcontext"]["command"] == "libctx-mcp"
+
+
+def test_install_mcp_vscode(tmp_path: Path) -> None:
+    """``libctx install --mcp --target vscode`` creates .vscode/mcp.json."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--mcp", "--target", "vscode"])
+
+        assert result.exit_code == 0
+        mcp_file = Path(".vscode/mcp.json")
+        assert mcp_file.exists()
+
+        data = json.loads(mcp_file.read_text(encoding="utf-8"))
+        assert "servers" in data
+        assert "libcontext" in data["servers"]
+        assert data["servers"]["libcontext"]["type"] == "stdio"
+
+
+def test_install_mcp_merges_existing(tmp_path: Path) -> None:
+    """MCP install merges into existing .mcp.json without clobbering."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        existing = {"mcpServers": {"other-tool": {"command": "other"}}}
+        Path(".mcp.json").write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+        result = runner.invoke(main, ["install", "--mcp"])
+
+        assert result.exit_code == 0
+        data = json.loads(Path(".mcp.json").read_text(encoding="utf-8"))
+        assert "other-tool" in data["mcpServers"]
+        assert "libcontext" in data["mcpServers"]
+
+
+def test_install_mcp_target_github_no_match(tmp_path: Path) -> None:
+    """``--mcp --target github`` has no matching files — errors."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--mcp", "--target", "github"])
+
+        assert result.exit_code != 0
+        assert "Nothing to install" in result.output
+
+
+def test_install_mcp_corrupt_json(tmp_path: Path) -> None:
+    """``--mcp`` with corrupt existing .mcp.json exits with error."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path(".mcp.json").write_text("{invalid json", encoding="utf-8")
+
+        result = runner.invoke(main, ["install", "--mcp"])
+
+        assert result.exit_code != 0
+        assert "Cannot parse" in result.output
+
+
+# ---------------------------------------------------------------------------
+# install --all
+# ---------------------------------------------------------------------------
+
+
+def test_install_all_claude(tmp_path: Path) -> None:
+    """``libctx install --all`` installs skills + mcp for claude."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--all"])
+
+        assert result.exit_code == 0
+        assert Path(".claude/skills/lib/SKILL.md").exists()
+        assert Path(".mcp.json").exists()
+
+
+def test_install_all_target_all(tmp_path: Path) -> None:
+    """``libctx install --all --target all`` installs for every platform."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--all", "--target", "all"])
+
+        assert result.exit_code == 0
+        # Skills
+        assert Path(".claude/skills/lib/SKILL.md").exists()
+        assert Path(".github/skills/lib/SKILL.md").exists()
+        # MCP
+        assert Path(".mcp.json").exists()
+        assert Path(".vscode/mcp.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Combined flags
+# ---------------------------------------------------------------------------
+
+
+def test_install_skills_and_mcp(tmp_path: Path) -> None:
+    """``--skills --mcp`` installs both without --all."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--skills", "--mcp"])
+
+        assert result.exit_code == 0
+        assert Path(".claude/skills/lib/SKILL.md").exists()
+        assert Path(".mcp.json").exists()
+
+
+def test_install_skills_target_vscode_no_match(tmp_path: Path) -> None:
+    """``--skills --target vscode`` has no matching files — errors."""
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(main, ["install", "--skills", "--target", "vscode"])
+
+        assert result.exit_code != 0
+        assert "Nothing to install" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Progressive disclosure flags
+# ---------------------------------------------------------------------------
+
+
+def test_overview_flag(sample_package: Path) -> None:
+    """``--overview`` shows compact module list without signatures."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["inspect", str(sample_package), "--overview", "-q"])
+
+    assert result.exit_code == 0
+    assert "## Modules" in result.output
+    assert "hello()" in result.output
+    # Overview should NOT contain full signatures
+    assert "name: str" not in result.output
+
+
+def test_module_flag(sample_package: Path) -> None:
+    """``--module`` renders a single module's detailed API."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["inspect", str(sample_package), "--module", "demopkg.core", "-q"]
+    )
+
+    assert result.exit_code == 0
+    assert "### `demopkg.core`" in result.output
+    assert "def hello(name: str) -> str" in result.output
+
+
+def test_module_flag_not_found(sample_package: Path) -> None:
+    """``--module`` with bad module name exits with error."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["inspect", str(sample_package), "--module", "demopkg.nonexistent", "-q"],
+    )
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_search_flag(sample_package: Path) -> None:
+    """``--search`` finds functions matching query."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["inspect", str(sample_package), "--search", "hello", "-q"]
+    )
+
+    assert result.exit_code == 0
+    assert "hello" in result.output
+    assert "function" in result.output
+
+
+def test_search_flag_no_matches(sample_package: Path) -> None:
+    """``--search`` with no matches shows a message."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["inspect", str(sample_package), "--search", "nonexistent", "-q"]
+    )
+
+    assert result.exit_code == 0
+    assert "No matches" in result.output
+
+
+def test_mutually_exclusive_flags(sample_package: Path) -> None:
+    """--overview, --module, and --search are mutually exclusive."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["inspect", str(sample_package), "--overview", "--search", "hello"]
+    )
+
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
+def test_overview_and_module_exclusive(sample_package: Path) -> None:
+    """--overview and --module cannot be combined."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["inspect", str(sample_package), "--overview", "--module", "demopkg.core"],
+    )
+
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output

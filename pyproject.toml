@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "libcontext"
 version = "0.1.0"
-description = "Generate optimized LLM context from Python library APIs for GitHub Copilot"
+description = "Generate optimized LLM context from Python library APIs — CLI, skill, and MCP server"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -13,7 +13,7 @@ authors = [
     { name = "Jonathan VARELA" },
 ]
 urls = { Homepage = "https://github.com/Syclaw/libcontext", Repository = "https://github.com/Syclaw/libcontext", Issues = "https://github.com/Syclaw/libcontext/issues" }
-keywords = ["copilot", "context", "documentation", "ast", "introspection"]
+keywords = ["copilot", "context", "documentation", "ast", "introspection", "mcp", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -33,15 +33,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.4.0",
-    "mypy>=1.10",
+mcp = [
+    "mcp[cli]>=1.0; python_version >= '3.10'",
 ]
 
 [project.scripts]
 libctx = "libcontext.cli:main"
+libctx-mcp = "libcontext.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/libcontext"]
@@ -121,6 +119,11 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = "tomli"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [dependency-groups]
 dev = [

@@ -9,6 +9,12 @@ This document lists all dependencies used by **libcontext** and their respective
 | [click](https://pypi.org/project/click/) | >=8.0 | BSD-3-Clause | Composable command line interface toolkit. |
 | [tomli](https://pypi.org/project/tomli/) | >=1.0 | MIT | A lil' TOML parser. Only required for Python < 3.11 (replaced by `tomllib` in the standard library). |
 
+## Optional Dependencies (`[mcp]` extra)
+
+| Package | Version | License | Description |
+|---------|---------|---------|-------------|
+| [mcp[cli]](https://pypi.org/project/mcp/) | >=1.0 | MIT | Model Context Protocol SDK with CLI extras. Requires Python >= 3.10. Enables the `libctx-mcp` server for VS Code / Cursor integration. |
+
 ## Development Dependencies
 
 | Package | Version | License | Description |
@@ -36,6 +42,8 @@ The following standard library modules are used and require **no additional inst
 - `logging` — Diagnostic logging
 - `sys` — System-specific parameters
 - `io` — I/O handling (UTF-8 stdout wrapper)
+- `json` — JSON reading/writing (MCP config merge)
+- `textwrap` — Text formatting (skill content generation)
 - `tomllib` — TOML parsing (Python 3.11+, replaces `tomli`)
 
 ## License Compatibility

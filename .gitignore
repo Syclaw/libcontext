@@ -35,6 +35,8 @@ uv.lock
 # IDE
 .vscode/
 .idea/
+.claude/
+CLAUDE.md
 *.swp
 *.swo
 *~

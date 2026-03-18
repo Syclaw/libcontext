@@ -22,6 +22,14 @@ from .models import (
     VariableInfo,
 )
 
+
+def _is_public_name(name: str, exports: set[str] | None) -> bool:
+    """Check if a name is public, respecting __all__ when present."""
+    if exports is not None:
+        return name in exports
+    return is_public_member(name)
+
+
 # ---------------------------------------------------------------------------
 # Parameter & signature formatting
 # ---------------------------------------------------------------------------
@@ -184,8 +192,19 @@ def _render_class(cls: ClassInfo) -> str:
     return "\n".join(lines)
 
 
-def _render_module(module: ModuleInfo) -> str:
-    """Render a module as a Markdown section."""
+def render_module(module: ModuleInfo) -> str:
+    """Render a single module as a Markdown section.
+
+    Produces a self-contained Markdown block with classes, functions,
+    constants, and module-level variables.  Suitable for injecting a
+    single module's API into an LLM conversation.
+
+    Args:
+        module: The module to render.
+
+    Returns:
+        Markdown string for this module.
+    """
     lines: list[str] = []
 
     lines.append(f"### `{module.name}`")
@@ -198,19 +217,14 @@ def _render_module(module: ModuleInfo) -> str:
     # Determine public API boundary
     exports = set(module.all_exports) if module.all_exports is not None else None
 
-    def _is_public(name: str) -> bool:
-        if exports is not None:
-            return name in exports
-        return is_public_member(name)
-
     # Classes
-    public_classes = [c for c in module.classes if _is_public(c.name)]
+    public_classes = [c for c in module.classes if _is_public_name(c.name, exports)]
     for cls in public_classes:
         lines.append("")
         lines.append(_render_class(cls))
 
     # Functions
-    public_functions = [f for f in module.functions if _is_public(f.name)]
+    public_functions = [f for f in module.functions if _is_public_name(f.name, exports)]
     if public_functions:
         lines.append("")
         lines.append("**Functions:**")
@@ -220,7 +234,9 @@ def _render_module(module: ModuleInfo) -> str:
 
     # Constants (UPPER_CASE variables)
     public_constants = [
-        v for v in module.variables if _is_public(v.name) and v.name.isupper()
+        v
+        for v in module.variables
+        if _is_public_name(v.name, exports) and v.name.isupper()
     ]
     if public_constants:
         lines.append("")
@@ -230,7 +246,9 @@ def _render_module(module: ModuleInfo) -> str:
 
     # Module-level variables (non-constant public variables)
     public_vars = [
-        v for v in module.variables if _is_public(v.name) and not v.name.isupper()
+        v
+        for v in module.variables
+        if _is_public_name(v.name, exports) and not v.name.isupper()
     ]
     if public_vars:
         lines.append("")
@@ -248,6 +266,106 @@ def _render_module(module: ModuleInfo) -> str:
 # Markers used to delimit auto-generated sections in existing files
 BEGIN_MARKER = "<!-- BEGIN LIBCONTEXT: {name} -->"
 END_MARKER = "<!-- END LIBCONTEXT: {name} -->"
+
+
+def render_package_overview(package: PackageInfo) -> str:
+    """Render a compact structural overview of a package.
+
+    Lists each module with its public class and function names (no full
+    signatures).  Designed for progressive disclosure: use this to
+    understand a package's shape, then request per-module detail.
+
+    Args:
+        package: The collected package information.
+
+    Returns:
+        A compact Markdown overview.
+    """
+    lines: list[str] = []
+
+    version = f" v{package.version}" if package.version else ""
+    lines.append(f"# {package.name}{version}")
+    lines.append("")
+
+    if package.summary:
+        lines.append(f"> {package.summary}")
+        lines.append("")
+
+    modules = package.non_empty_modules
+    if not modules:
+        lines.append("*No public modules found.*")
+        return "\n".join(lines)
+
+    lines.append("## Modules")
+    lines.append("")
+
+    for module in modules:
+        exports = set(module.all_exports) if module.all_exports is not None else None
+
+        class_names = [
+            c.name for c in module.classes if _is_public_name(c.name, exports)
+        ]
+        func_names = [
+            f.name for f in module.functions if _is_public_name(f.name, exports)
+        ]
+
+        parts: list[str] = []
+        if class_names:
+            parts.append(", ".join(class_names))
+        if func_names:
+            parts.append(", ".join(f"{n}()" for n in func_names))
+
+        suffix = f" — {'; '.join(parts)}" if parts else ""
+        lines.append(f"- **`{module.name}`**{suffix}")
+
+    return "\n".join(lines)
+
+
+def search_package(package: PackageInfo, query: str) -> str:
+    """Search for classes, functions, or methods matching a query.
+
+    Performs a case-insensitive substring search across all public names
+    in the package and returns matching items with their module location
+    and signature.
+
+    Args:
+        package: The collected package information.
+        query: Search term (case-insensitive substring match).
+
+    Returns:
+        Markdown-formatted search results, or a "no matches" message.
+    """
+    query_lower = query.lower()
+    results: list[str] = []
+
+    for mod in package.non_empty_modules:
+        exports = set(mod.all_exports) if mod.all_exports is not None else None
+
+        for cls in mod.classes:
+            if not _is_public_name(cls.name, exports):
+                continue
+            if query_lower in cls.name.lower():
+                bases = f"({', '.join(cls.bases)})" if cls.bases else ""
+                results.append(f"- class `{mod.name}.{cls.name}{bases}`")
+
+            for method in cls.methods:
+                if not is_public_member(method.name, is_method=True):
+                    continue
+                if query_lower in method.name.lower():
+                    sig = _format_signature(method, compact=True)
+                    results.append(f"- method `{mod.name}.{cls.name}.{sig}`")
+
+        for func in mod.functions:
+            if not _is_public_name(func.name, exports):
+                continue
+            if query_lower in func.name.lower():
+                sig = _format_signature(func)
+                results.append(f"- function `{mod.name}.{sig}`")
+
+    if not results:
+        return f"No matches for '{query}' in {package.name}."
+
+    return "\n".join(results)
 
 
 def render_package(
@@ -306,7 +424,7 @@ def render_package(
         lines.append("")
 
         for module in modules:
-            lines.append(_render_module(module))
+            lines.append(render_module(module))
             lines.append("")
             lines.append("---")
             lines.append("")

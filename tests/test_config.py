@@ -14,6 +14,7 @@ from libcontext.config import (
     find_config_for_package,
     read_config_from_pyproject,
 )
+from libcontext.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
 # LibcontextConfig.from_dict
@@ -246,37 +247,37 @@ def test_find_config_no_file_returns_default(tmp_path: Path) -> None:
 
 def test_from_dict_bad_include_modules_type() -> None:
     """include_modules as a string raises TypeError."""
-    with pytest.raises(TypeError, match="include_modules must be a list"):
+    with pytest.raises(ConfigError, match="include_modules must be a list"):
         LibcontextConfig.from_dict({"include_modules": "not_a_list"})
 
 
 def test_from_dict_bad_exclude_modules_type() -> None:
     """exclude_modules as a string raises TypeError."""
-    with pytest.raises(TypeError, match="exclude_modules must be a list"):
+    with pytest.raises(ConfigError, match="exclude_modules must be a list"):
         LibcontextConfig.from_dict({"exclude_modules": "single"})
 
 
 def test_from_dict_bad_include_private_type() -> None:
     """include_private as a string raises TypeError."""
-    with pytest.raises(TypeError, match="include_private must be a bool"):
+    with pytest.raises(ConfigError, match="include_private must be a bool"):
         LibcontextConfig.from_dict({"include_private": "yes"})
 
 
 def test_from_dict_bad_extra_context_type() -> None:
     """extra_context as an int raises TypeError."""
-    with pytest.raises(TypeError, match="extra_context must be a string"):
+    with pytest.raises(ConfigError, match="extra_context must be a string"):
         LibcontextConfig.from_dict({"extra_context": 123})
 
 
 def test_from_dict_bad_max_readme_lines_type() -> None:
     """max_readme_lines as a string raises TypeError."""
-    with pytest.raises(TypeError, match="max_readme_lines must be an integer"):
+    with pytest.raises(ConfigError, match="max_readme_lines must be an integer"):
         LibcontextConfig.from_dict({"max_readme_lines": "fifty"})
 
 
 def test_from_dict_max_readme_lines_bool_rejected() -> None:
     """max_readme_lines as a bool is rejected (bool is subclass of int)."""
-    with pytest.raises(TypeError, match="max_readme_lines must be an integer"):
+    with pytest.raises(ConfigError, match="max_readme_lines must be an integer"):
         LibcontextConfig.from_dict({"max_readme_lines": True})
 
 

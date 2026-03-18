@@ -35,4 +35,13 @@ libcontext uses **AST-based static analysis only** — it never executes code fr
 - Parse Python source code via `ast.parse()`
 - Access package metadata via `importlib.metadata`
 
+### MCP Server (`libctx-mcp`)
+
+The optional MCP server adds a JSON-RPC interface over **stdio** (standard input/output). This means:
+
+- **Local-only communication** — the server is launched by the IDE as a child process; it does not open network ports or accept remote connections.
+- **Input validation** — package names and module names received via tool calls are passed to `collect_package()`, which resolves them through `importlib` and filesystem paths. Malformed names result in a `ValueError`, not arbitrary file access.
+- **No code execution** — the same AST-only guarantee applies. The MCP server calls the same `collect_package` / `render_*` functions as the CLI.
+- **Session cache** — an `lru_cache` stores collected packages for the lifetime of the server process. The `refresh_cache` tool allows clearing it. Cache is not persisted to disk and is isolated per server process.
+
 If you identify any way these operations could be exploited, please report it.

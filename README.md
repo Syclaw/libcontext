@@ -8,70 +8,97 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Typed](https://img.shields.io/badge/typed-mypy-blue.svg)](https://mypy-lang.org/)
 
-> Make your AI coding assistant aware of any Python library's API — especially the ones it doesn't already know.
+> Make your AI coding assistant aware of any Python library's API — on demand, not always-on.
 
-**libcontext** inspects any installed Python package via static AST analysis (no code execution) and generates a compact Markdown API reference. Add it to your [`.github/copilot-instructions.md`](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions) and GitHub Copilot will automatically include it as context in **Chat, Agent, and Code Review** interactions.
+**libcontext** inspects any installed Python package via static AST analysis (no code execution) and generates compact Markdown API references. It integrates with Claude Code (via a `/lib` skill) and VS Code Copilot (via an MCP server) to provide **progressive disclosure** — only loading API context when you actually need it, avoiding context window pollution.
 
 ## Why This Exists
 
-When you ask Copilot Chat how to use a library, or when Copilot Agent generates code that depends on one, the quality of the output depends entirely on what the model knows about that library's API.
-
-For popular, well-established libraries, LLMs generally have good knowledge from training data. But for many real-world scenarios, the model is working blind:
+When you ask an AI assistant how to use a library, the quality of the output depends entirely on what the model knows about that library's API. For many real-world scenarios, the model is working blind:
 
 - **Internal / private libraries** — Zero training data exists. The model has never seen the API.
 - **Niche open-source packages** — Sparse or outdated training data leads to hallucinated methods and wrong signatures.
 - **New versions of any library** — Training data has a cutoff. The model knows v2, you're using v3.
 
-GitHub Copilot supports [repository custom instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions) — a `.github/copilot-instructions.md` file that is automatically included as context. According to GitHub's [support matrix](https://docs.github.com/en/copilot/reference/custom-instructions-support), this file is loaded by:
+Dumping entire API references into always-on instruction files (like `copilot-instructions.md` or `CLAUDE.md`) wastes context window on every interaction — even when you're not using that library. Research ([ReadMe.LLM, UC Berkeley 2025](https://arxiv.org/abs/2504.15870)) confirms that excessive context triggers hallucinations and degrades output quality.
 
-| Copilot feature | Uses custom instructions |
-|---|---|
-| **Copilot Chat** (VS Code, JetBrains, Visual Studio, Eclipse, Xcode, github.com) | ✅ Yes |
-| **Copilot coding agent** (PR generation, agent mode) | ✅ Yes |
-| **Copilot code review** | ✅ Yes |
-| **Inline code completion** (autocomplete as you type) | ❌ Not currently |
-
-libcontext bridges the knowledge gap by pre-generating a structured API reference from installed packages and placing it where Copilot can find it.
+libcontext solves this with **progressive disclosure**: overview first, then drill into specific modules only when needed.
 
 ## When libcontext makes the biggest difference
 
 | Scenario | Impact | Why |
 |---|---|---|
-| **Internal / private libraries** | 🔴 Critical | Zero training data exists for proprietary code |
-| **Niche open-source packages** | 🟠 High | Sparse training data → hallucinated methods and wrong signatures |
-| **New versions of any library** | 🟠 High | Training data has a cutoff — the LLM knows v2, you're using v3 |
-| **Popular, stable libraries** | ⚪ Low | The LLM already has good knowledge from training data |
-
-> **If Copilot has ever suggested a function that doesn't exist** in one of your dependencies, or got the parameters wrong — libcontext can help prevent that.
+| **Internal / private libraries** | Critical | Zero training data exists for proprietary code |
+| **Niche open-source packages** | High | Sparse training data leads to hallucinated methods |
+| **New versions of any library** | High | Training cutoff — the LLM knows v2, you're using v3 |
+| **Popular, stable libraries** | Low | The LLM already has good knowledge from training data |
 
 ## Quick Start
 
 ```bash
 pip install libcontext
 
-# Generate context for any installed package
-libctx requests -o .github/copilot-instructions.md
+# Install the /lib skill into your Claude Code project
+libctx install --skills
 
-# Done — Copilot Chat and Agent now know the complete requests API
-# (15 modules, 44 classes, 70 functions → ~800 lines of compact reference)
+# Now in Claude Code, just type:
+#   /lib requests
+# Claude will progressively discover the API for you
+```
+
+For VS Code with MCP support:
+
+```bash
+pip install libcontext[mcp]
+libctx install --mcp --target vscode
 ```
 
 ## How It Works
 
-1. **AST parsing** — Reads source files of installed packages using Python's `ast` module. No code is ever executed, making it safe for any package.
-2. **Extraction** — Classes, functions, methods, parameters, type annotations, decorators, and docstrings are collected.
-3. **Compact rendering** — Everything is rendered into structured Markdown optimised for LLM context windows (signatures and docstrings only, no implementation code).
-4. **Marker injection** — Output is wrapped in `<!-- BEGIN/END LIBCONTEXT -->` markers, so re-running updates only its section without touching the rest of the file.
+### Progressive Disclosure (Skill / MCP)
+
+Instead of dumping everything upfront, libcontext follows a progressive workflow:
 
 ```
-installed package         libcontext              .github/copilot-instructions.md
-  (source files)    ──▶  (AST analysis)   ──▶   (compact API reference)
-                                                        │
-                                                        ▼
-                                                 Copilot Chat, Agent &
-                                                 Code Review now know
-                                                 the full API
+Step 1: Overview          Step 2: Drill down          Step 3: Search
+libctx inspect requests   libctx inspect requests     libctx inspect requests
+  --overview                --module requests.api       --search Session
+
+  Module list with          Full signatures,            Find specific
+  class/function names      docstrings, parameters      classes or methods
+  (no signatures)           for one module              across all modules
 ```
+
+The `/lib` skill (Claude Code) and MCP server (VS Code / Cursor) automate this workflow — the AI assistant decides what to inspect based on the task at hand.
+
+### Direct CLI Usage
+
+```bash
+# Full API reference to stdout
+libctx inspect requests
+
+# Compact overview — module names with class/function names
+libctx inspect requests --overview -q
+
+# Detailed API for a single module
+libctx inspect requests --module requests.api -q
+
+# Search for a specific class or function
+libctx inspect requests --search Session -q
+
+# Write to a file with marker injection
+libctx inspect requests -o .github/copilot-instructions.md
+
+# Multiple libraries at once
+libctx inspect requests httpx pydantic -o context.md
+```
+
+### AST Analysis
+
+1. **Parsing** — Reads source files of installed packages using Python's `ast` module. No code is ever executed.
+2. **Extraction** — Classes, functions, methods, parameters, type annotations, decorators, and docstrings.
+3. **Compact rendering** — Structured Markdown optimised for LLM context windows.
+4. **Marker injection** — `<!-- BEGIN/END LIBCONTEXT -->` markers for idempotent file updates.
 
 ## Installation
 
@@ -79,10 +106,17 @@ installed package         libcontext              .github/copilot-instructions.m
 pip install libcontext
 ```
 
+With MCP server support (requires Python 3.10+):
+
+```bash
+pip install libcontext[mcp]
+```
+
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv add libcontext
+uv add libcontext           # basic
+uv add libcontext[mcp]      # with MCP server
 ```
 
 For development:
@@ -90,155 +124,124 @@ For development:
 ```bash
 git clone https://github.com/Syclaw/libcontext.git
 cd libcontext
-uv sync --all-extras   # or: pip install -e ".[dev]"
+uv sync --all-extras
 ```
 
-## Usage
+## Integration Setup
 
-### Command Line
+The `install` command configures your project for AI-assisted library discovery:
 
 ```bash
-# Generate context for an installed library (stdout)
-libctx requests
+# Claude Code — install the /lib skill
+libctx install --skills
 
-# Write to the Copilot instructions file
-libctx requests -o .github/copilot-instructions.md
+# Claude Code — install MCP server config
+libctx install --mcp
 
-# Multiple libraries at once
-libctx requests httpx pydantic -o .github/copilot-instructions.md
+# VS Code / Cursor — install MCP server config
+libctx install --mcp --target vscode
 
-# Include private members
-libctx mypackage --include-private
+# GitHub Copilot — install the skill
+libctx install --skills --target github
 
-# Without the README
-libctx mypackage --no-readme
-
-# With an explicit configuration file
-libctx mypackage --config path/to/pyproject.toml
+# Everything at once
+libctx install --all --target all
 ```
 
-### Python API
+| Flag | What it installs |
+|---|---|
+| `--skills` | `/lib` skill for on-demand API discovery |
+| `--mcp` | MCP server configuration for tool-based access |
+| `--all` | Both skills and MCP |
+
+| Target | Skills location | MCP location |
+|---|---|---|
+| `claude` (default) | `.claude/skills/lib/SKILL.md` | `.mcp.json` |
+| `github` | `.github/skills/lib/SKILL.md` | — |
+| `vscode` | — | `.vscode/mcp.json` |
+
+### Using the `/lib` Skill (Claude Code)
+
+After `libctx install --skills`, type `/lib <package>` in Claude Code:
+
+```
+/lib requests              → overview, then drill into modules
+/lib requests requests.api → jump straight to a specific module
+```
+
+Claude will automatically run `libctx` commands to discover the API progressively.
+
+### Using the MCP Server
+
+After `libctx install --mcp`, the MCP server provides tools:
+
+- `get_package_overview` — structural overview of a package
+- `get_module_api` — detailed API for a single module
+- `search_api` — search for classes, functions, or methods
+- `refresh_cache` — clear the session cache
+
+## Python API
 
 ```python
 from libcontext import collect_package, render_package
 
-# Collect the API of an installed package
+# Full API reference
+pkg = collect_package("requests")
+print(render_package(pkg))
+```
+
+```python
+from libcontext import collect_package, render_package_overview, render_module, search_package
+
 pkg = collect_package("requests")
 
-# Generate the Markdown
-context = render_package(pkg)
-print(context)
+# Overview — module names with class/function names
+print(render_package_overview(pkg))
+
+# Single module — full signatures and docstrings
+for mod in pkg.non_empty_modules:
+    if mod.name == "requests.api":
+        print(render_module(mod))
+
+# Search — find specific classes or functions
+print(search_package(pkg, "Session"))
 ```
-
-### Injection into an Existing File
-
-When using `-o`, libcontext injects content between markers:
-
-```markdown
-<!-- BEGIN LIBCONTEXT: requests -->
-... generated content ...
-<!-- END LIBCONTEXT: requests -->
-```
-
-Subsequent runs update only that section, preserving the rest of the file.
 
 ## Configuration (Optional)
 
-Library authors can customise what libcontext exposes from their package by adding a `[tool.libcontext]` section to their `pyproject.toml`. **The library does not need to depend on libcontext** — this is purely opt-in metadata that libcontext reads at generation time.
-
-```
-┌──────────────────┐     ┌──────────────────────┐     ┌──────────────────────┐
-│  libcontext       │     │  Library B            │     │  Your project        │
-│  (CLI tool)       │     │  (any Python pkg)     │     │  (end user)          │
-│                   │     │                       │     │                       │
-│  Reads            │     │  Can optionally add   │     │  Runs:               │
-│  [tool.libcontext]│◀────│  [tool.libcontext]    │     │  libctx lib_b        │
-│  from library B   │     │  to pyproject.toml    │     │                       │
-└──────────────────┘     └──────────────────────┘     └──────────────────────┘
-```
+Library authors can customise what libcontext exposes by adding a `[tool.libcontext]` section to their `pyproject.toml`. The library does not need to depend on libcontext.
 
 ```toml
 [tool.libcontext]
-# Only include specific modules
 include_modules = ["mylib.core", "mylib.models"]
-
-# Exclude modules
 exclude_modules = ["mylib._internal", "mylib.tests"]
-
-# Include private members
 include_private = false
-
-# Free-form extra context
+max_readme_lines = 150
 extra_context = """
 This library uses the Repository pattern for data access.
 All async operations use httpx internally.
 """
-
-# Maximum README lines
-max_readme_lines = 150
-```
-
-## Output Example
-
-```markdown
-# requests v2.31.0 — API Reference
-
-> Python HTTP for Humans.
-
-## Overview
-
-# Requests
-Requests is a simple HTTP library for Python...
-
-## API Reference
-
-### `requests`
-
-#### `class Session()`
-A Requests session. Provides cookie persistence, connection-pooling, and configuration.
-
-**Methods:**
-- `def get(url: str, **kwargs) -> Response`
-  Sends a GET request.
-- `def post(url: str, data: Any = None, json: Any = None, **kwargs) -> Response`
-  Sends a POST request.
-
-**Functions:**
-
-- `def get(url: str, params: dict | None = None, **kwargs) -> Response`
-  Sends a GET request.
-- `def post(url: str, data: Any = None, **kwargs) -> Response`
-  Sends a POST request.
 ```
 
 ## Architecture
 
-| Module | Description |
+| Module | Role |
 |---|---|
-| `models.py` | Dataclasses to represent Python components |
-| `inspector.py` | Static AST analysis (no code execution) |
-| `collector.py` | Discovery and collection of all modules in a package |
+| `models.py` | Dataclasses representing Python components |
+| `inspector.py` | Static AST analysis — signatures, docstrings, decorators |
+| `collector.py` | Package discovery and module collection |
 | `config.py` | Reads `[tool.libcontext]` from pyproject.toml |
 | `renderer.py` | LLM-optimised Markdown generation |
-| `cli.py` | CLI entry point (`libctx`) |
+| `cli.py` | CLI entry point with `inspect` and `install` subcommands |
+| `mcp_server.py` | MCP server for VS Code / Cursor integration (optional) |
 
 ## Development
 
 ```bash
-# Install in development mode
 uv sync --all-extras
-
-# Run tests
-uv run pytest
-
-# Run tests with coverage
 uv run pytest --cov=libcontext
-
-# Lint & format
 uv run ruff check src/ tests/
 uv run ruff format src/ tests/
-
-# Type checking
 uv run mypy src/libcontext
 ```
 

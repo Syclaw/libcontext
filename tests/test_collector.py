@@ -17,6 +17,7 @@ from libcontext.collector import (
     find_package_path,
 )
 from libcontext.config import LibcontextConfig
+from libcontext.exceptions import InspectionError, PackageNotFoundError
 
 
 def test_collect_local_directory(tmp_path: Path):
@@ -85,8 +86,8 @@ def test_collect_local_with_private(tmp_path: Path):
 
 
 def test_collect_nonexistent_package():
-    """Collecting a non-existent package raises ValueError."""
-    with pytest.raises(ValueError, match="not found"):
+    """Collecting a non-existent package raises PackageNotFoundError."""
+    with pytest.raises(PackageNotFoundError, match="not found"):
         collect_package("this_package_does_not_exist_xyz_123")
 
 
@@ -520,12 +521,12 @@ def test_collect_skips_non_utf8_module(tmp_path: Path) -> None:
 
 
 def test_collect_single_file_non_utf8(tmp_path: Path) -> None:
-    """Single-file module with bad encoding is skipped gracefully."""
+    """Single-file module with bad encoding raises InspectionError."""
     single = tmp_path / "bad.py"
     single.write_bytes(b'NAME = "caf\xe9"\n')
 
-    info = collect_package(str(single), include_readme=False)
-    assert info.modules == []
+    with pytest.raises(InspectionError):
+        collect_package(str(single), include_readme=False)
 
 
 def test_find_readme_skips_non_utf8(tmp_path: Path) -> None:
@@ -554,7 +555,7 @@ def test_syntax_error_is_logged(tmp_path: Path, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="libcontext.collector"):
         collect_package(str(pkg), include_readme=False)
 
-    assert any("Syntax error" in r.message for r in caplog.records)
+    assert any("Skipped" in r.message for r in caplog.records)
 
 
 def test_encoding_error_is_logged(tmp_path: Path, caplog) -> None:
@@ -567,7 +568,7 @@ def test_encoding_error_is_logged(tmp_path: Path, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="libcontext.collector"):
         collect_package(str(pkg), include_readme=False)
 
-    assert any("Encoding error" in r.message for r in caplog.records)
+    assert any("Skipped" in r.message for r in caplog.records)
 
 
 def test_debug_logging_for_package_resolution(tmp_path: Path, caplog) -> None:

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Progressive disclosure CLI flags: `--overview`, `--module`, `--search` for on-demand API inspection.
+- `libctx install` subcommand with `--skills`, `--mcp`, `--all`, and `--target` options.
+- `/lib` skill for Claude Code and GitHub Copilot — on-demand library discovery via slash command.
+- MCP server (`libctx-mcp`) for VS Code / Cursor integration with `get_package_overview`, `get_module_api`, `search_api`, and `refresh_cache` tools.
+- `render_module()`, `render_package_overview()`, and `search_package()` public API functions.
+- Optional `[mcp]` extra for MCP server dependencies (requires Python 3.10+).
+- Non-destructive JSON merge for MCP config files (preserves existing entries).
+
+### Changed
+
+- CLI restructured as a click Group with `inspect` and `install` subcommands.
+
 ## [0.1.0] - 2026-02-13
 
 ### Added

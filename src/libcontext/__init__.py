@@ -14,15 +14,22 @@ Quick start::
 
 Or from the command line::
 
-    libctx requests -o .github/copilot-instructions.md
+    libctx inspect requests -o .github/copilot-instructions.md
 """
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 
 from .collector import collect_package, find_package_path
 from .config import LibcontextConfig
+from .exceptions import (
+    ConfigError,
+    InspectionError,
+    LibcontextError,
+    PackageNotFoundError,
+)
 from .inspector import inspect_file, inspect_source
 from .models import (
     ClassInfo,
@@ -32,20 +39,33 @@ from .models import (
     ParameterInfo,
     VariableInfo,
 )
-from .renderer import inject_into_file, render_package
+from .renderer import (
+    inject_into_file,
+    render_module,
+    render_package,
+    render_package_overview,
+    search_package,
+)
 
 # Library best practice: add NullHandler to prevent "No handlers could be found"
 # warnings when libcontext is used as a library (not via CLI).
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.1.0"
+try:
+    __version__ = importlib.metadata.version("libcontext")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 __all__ = [
     "ClassInfo",
+    "ConfigError",
     "FunctionInfo",
+    "InspectionError",
     "LibcontextConfig",
+    "LibcontextError",
     "ModuleInfo",
     "PackageInfo",
+    "PackageNotFoundError",
     "ParameterInfo",
     "VariableInfo",
     "collect_package",
@@ -53,5 +73,8 @@ __all__ = [
     "inject_into_file",
     "inspect_file",
     "inspect_source",
+    "render_module",
     "render_package",
+    "render_package_overview",
+    "search_package",
 ]

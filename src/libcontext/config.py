@@ -21,6 +21,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .exceptions import ConfigError
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,24 +51,24 @@ class LibcontextConfig:
 
         # --- Type validation ---
         if not isinstance(include_modules, list):
-            raise TypeError(
+            raise ConfigError(
                 f"include_modules must be a list, got {type(include_modules).__name__}"
             )
         if not isinstance(exclude_modules, list):
-            raise TypeError(
+            raise ConfigError(
                 f"exclude_modules must be a list, got {type(exclude_modules).__name__}"
             )
         if not isinstance(include_private, bool):
-            raise TypeError(
+            raise ConfigError(
                 f"include_private must be a bool, got {type(include_private).__name__}"
             )
         if extra_context is not None and not isinstance(extra_context, str):
-            raise TypeError(
+            raise ConfigError(
                 "extra_context must be a string or null, "
                 f"got {type(extra_context).__name__}"
             )
         if not isinstance(max_readme_lines, int) or isinstance(max_readme_lines, bool):
-            raise TypeError(
+            raise ConfigError(
                 "max_readme_lines must be an integer, "
                 f"got {type(max_readme_lines).__name__}"
             )
