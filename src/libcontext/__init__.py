@@ -22,7 +22,7 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 
-from .collector import collect_package, find_package_path
+from .collector import collect_package, find_package_path, suggest_similar_packages
 from .config import LibcontextConfig
 from .exceptions import (
     ConfigError,
@@ -77,4 +77,5 @@ __all__ = [
     "render_package",
     "render_package_overview",
     "search_package",
+    "suggest_similar_packages",
 ]

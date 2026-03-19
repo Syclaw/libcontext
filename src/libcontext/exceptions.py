@@ -21,14 +21,23 @@ class PackageNotFoundError(LibcontextError):
 
     Attributes:
         package_name: The name that was looked up.
+        suggestions: Similar package names found in the environment.
     """
 
-    def __init__(self, package_name: str) -> None:
+    def __init__(
+        self,
+        package_name: str,
+        suggestions: list[str] | None = None,
+    ) -> None:
         self.package_name = package_name
-        super().__init__(
-            f"Package '{package_name}' not found. "
-            "Make sure it is installed in the current environment."
-        )
+        self.suggestions = suggestions or []
+        msg = f"Package '{package_name}' not found."
+        if self.suggestions:
+            joined = ", ".join(self.suggestions)
+            msg += f" Did you mean: {joined}?"
+        else:
+            msg += " Make sure it is installed in the current environment."
+        super().__init__(msg)
 
 
 class ConfigError(LibcontextError):

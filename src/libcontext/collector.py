@@ -8,9 +8,11 @@ complete :class:`~libcontext.models.PackageInfo` data structure.
 from __future__ import annotations
 
 import copy
+import difflib
 import importlib.metadata
 import importlib.util
 import logging
+import sys
 from pathlib import Path
 
 from .config import LibcontextConfig, find_config_for_package
@@ -19,6 +21,71 @@ from .inspector import inspect_file
 from .models import ModuleInfo, PackageInfo
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Package name suggestions
+# ---------------------------------------------------------------------------
+
+_SUGGESTION_CUTOFF = 0.6
+_SUGGESTION_MAX = 3
+
+
+def _get_installed_package_names() -> list[str]:
+    """Collect all known package names from the current environment.
+
+    Gathers both distribution names and top-level import names so that
+    suggestions cover both namespaces (e.g. ``scikit-learn`` and ``sklearn``).
+    """
+    names: set[str] = set()
+
+    if sys.version_info >= (3, 11):
+        for import_name in importlib.metadata.packages_distributions():
+            names.add(import_name)
+
+    seen_distributions: set[str] = set()
+    for dist in importlib.metadata.distributions():
+        dist_name = dist.metadata["Name"]
+        if not dist_name or dist_name in seen_distributions:
+            continue
+        seen_distributions.add(dist_name)
+        names.add(dist_name)
+        # Normalized form (- → _, lowercased) so "scikit-learn" also
+        # matches a typo like "scikit_lern"
+        normalized = dist_name.replace("-", "_").lower()
+        if normalized != dist_name:
+            names.add(normalized)
+
+        top_level = dist.read_text("top_level.txt")
+        if top_level:
+            for line in top_level.strip().splitlines():
+                entry = line.strip()
+                if entry and not entry.startswith("#"):
+                    names.add(entry)
+
+    return sorted(names)
+
+
+def suggest_similar_packages(name: str) -> list[str]:
+    """Find installed packages with names similar to *name*.
+
+    Uses :func:`difflib.get_close_matches` (Ratcliff/Obershelp algorithm)
+    which handles character transpositions better than raw Levenshtein
+    distance for short identifier strings.
+
+    Args:
+        name: The (possibly misspelled) package name.
+
+    Returns:
+        Up to 3 similar names, sorted by descending similarity.
+    """
+    candidates = _get_installed_package_names()
+    return difflib.get_close_matches(
+        name,
+        candidates,
+        n=_SUGGESTION_MAX,
+        cutoff=_SUGGESTION_CUTOFF,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +319,8 @@ def collect_package(
     else:
         pkg_path_resolved = find_package_path(package_name)
         if pkg_path_resolved is None:
-            raise PackageNotFoundError(package_name)
+            suggestions = suggest_similar_packages(package_name)
+            raise PackageNotFoundError(package_name, suggestions=suggestions)
         pkg_path = pkg_path_resolved
         pkg_name = package_name
         metadata = _get_package_metadata(package_name)

@@ -11,10 +11,12 @@ import pytest
 
 from libcontext.collector import (
     _find_readme,
+    _get_installed_package_names,
     _get_package_metadata,
     _should_skip_path,
     collect_package,
     find_package_path,
+    suggest_similar_packages,
 )
 from libcontext.config import LibcontextConfig
 from libcontext.exceptions import InspectionError, PackageNotFoundError
@@ -583,3 +585,114 @@ def test_debug_logging_for_package_resolution(tmp_path: Path, caplog) -> None:
     messages = " ".join(r.message for r in caplog.records)
     assert "local path" in messages
     assert "Collected" in messages
+
+
+# ---------------------------------------------------------------------------
+# Package name suggestions
+# ---------------------------------------------------------------------------
+
+_DISTS_PATH = (
+    "libcontext.collector.importlib.metadata.distributions"
+)
+
+
+def _make_mock_dist(name: str, top_level: str | None = None) -> MagicMock:
+    """Create a mock distribution object for testing."""
+    dist = MagicMock()
+    dist.metadata = {"Name": name}
+    dist.read_text = MagicMock(return_value=top_level)
+    return dist
+
+
+def test_get_installed_package_names_collects_distributions() -> None:
+    """Distribution names and normalized forms are collected."""
+    dists = [
+        _make_mock_dist("requests"),
+        _make_mock_dist("scikit-learn", top_level="sklearn\n"),
+    ]
+    with patch(_DISTS_PATH, return_value=dists):
+        names = _get_installed_package_names()
+
+    assert "requests" in names
+    assert "scikit-learn" in names
+    assert "scikit_learn" in names
+    assert "sklearn" in names
+
+
+def test_get_installed_package_names_deduplicates() -> None:
+    """Duplicate distributions are seen only once."""
+    dists = [
+        _make_mock_dist("requests"),
+        _make_mock_dist("requests"),
+    ]
+    with patch(_DISTS_PATH, return_value=dists):
+        names = _get_installed_package_names()
+
+    assert names.count("requests") == 1
+
+
+def test_suggest_similar_packages_finds_close_match() -> None:
+    """A typo like 'reqeusts' matches 'requests'."""
+    dists = [
+        _make_mock_dist("requests"),
+        _make_mock_dist("flask"),
+        _make_mock_dist("numpy"),
+    ]
+    with patch(_DISTS_PATH, return_value=dists):
+        suggestions = suggest_similar_packages("reqeusts")
+
+    assert "requests" in suggestions
+
+
+def test_suggest_similar_packages_no_match() -> None:
+    """A completely unrelated name returns no suggestions."""
+    dists = [
+        _make_mock_dist("requests"),
+        _make_mock_dist("flask"),
+    ]
+    with patch(_DISTS_PATH, return_value=dists):
+        suggestions = suggest_similar_packages("xyzzy_not_a_package")
+
+    assert suggestions == []
+
+
+def test_suggest_similar_packages_max_results() -> None:
+    """At most 3 suggestions are returned."""
+    dists = [_make_mock_dist(f"aaa{i}") for i in range(10)]
+    with patch(_DISTS_PATH, return_value=dists):
+        suggestions = suggest_similar_packages("aaa0")
+
+    assert len(suggestions) <= 3
+
+
+def test_suggest_similar_packages_uses_top_level_names() -> None:
+    """Import names from top_level.txt are included as candidates."""
+    dists = [
+        _make_mock_dist("Pillow", top_level="PIL\n"),
+    ]
+    with patch(_DISTS_PATH, return_value=dists):
+        suggestions = suggest_similar_packages("PIl")
+
+    assert "PIL" in suggestions
+
+
+def test_collect_package_error_includes_suggestions() -> None:
+    """PackageNotFoundError from collect_package includes suggestions."""
+    dists = [
+        _make_mock_dist("click"),
+        _make_mock_dist("flask"),
+    ]
+    with (
+        patch(_DISTS_PATH, return_value=dists),
+        pytest.raises(PackageNotFoundError, match="Did you mean"),
+    ):
+        collect_package("clck")
+
+
+def test_collect_package_error_no_suggestions() -> None:
+    """PackageNotFoundError without suggestions shows install hint."""
+    with (
+        patch(_DISTS_PATH, return_value=[]),
+        pytest.raises(PackageNotFoundError, match="Make sure it is installed"),
+    ):
+        collect_package("totally_nonexistent_pkg_xyz_999")
