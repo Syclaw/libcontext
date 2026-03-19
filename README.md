@@ -36,7 +36,8 @@ libcontext solves this with **progressive disclosure**: overview first, then dri
 ## Quick Start
 
 ```bash
-pip install libcontext
+# Install globally with uv (recommended — available in all projects)
+uv tool install libcontext
 
 # Install the /lib skill into your Claude Code project
 libctx install --skills
@@ -49,7 +50,7 @@ libctx install --skills
 For VS Code with MCP support:
 
 ```bash
-pip install libcontext[mcp]
+uv tool install "libcontext[mcp]"
 libctx install --mcp --target vscode
 ```
 
@@ -102,24 +103,36 @@ libctx inspect requests httpx pydantic -o context.md
 
 ## Installation
 
-```bash
-pip install libcontext
-```
+### Global install (recommended)
 
-With MCP server support (requires Python 3.10+):
+Install once, use across all projects — no per-project dependency needed:
 
 ```bash
-pip install libcontext[mcp]
+uv tool install libcontext              # CLI only
+uv tool install "libcontext[mcp]"       # with MCP server (requires Python 3.10+)
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+Update later with `uv tool upgrade libcontext`.
+
+> **One-off usage without installing:** `uvx --from libcontext libctx inspect requests`
+
+### Per-project install
+
+If you prefer to add libcontext as a project dependency:
 
 ```bash
 uv add libcontext           # basic
 uv add libcontext[mcp]      # with MCP server
 ```
 
-For development:
+Or with pip:
+
+```bash
+pip install libcontext
+pip install libcontext[mcp]
+```
+
+### Development
 
 ```bash
 git clone https://github.com/Syclaw/libcontext.git
