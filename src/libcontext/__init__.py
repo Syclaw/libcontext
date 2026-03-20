@@ -24,6 +24,7 @@ import logging
 
 from .collector import collect_package, find_package_path, suggest_similar_packages
 from .config import LibcontextConfig
+from .diff import diff_packages
 from .exceptions import (
     ConfigError,
     InspectionError,
@@ -32,19 +33,26 @@ from .exceptions import (
 )
 from .inspector import inspect_file, inspect_source
 from .models import (
+    ClassDiff,
     ClassInfo,
+    DiffResult,
+    FunctionDiff,
     FunctionInfo,
+    ModuleDiff,
     ModuleInfo,
     PackageInfo,
     ParameterInfo,
+    VariableDiff,
     VariableInfo,
 )
 from .renderer import (
     inject_into_file,
+    render_diff,
     render_module,
     render_package,
     render_package_overview,
     search_package,
+    search_package_structured,
 )
 
 # Library best practice: add NullHandler to prevent "No handlers could be found"
@@ -57,25 +65,33 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
 __all__ = [
+    "ClassDiff",
     "ClassInfo",
     "ConfigError",
+    "DiffResult",
+    "FunctionDiff",
     "FunctionInfo",
     "InspectionError",
     "LibcontextConfig",
     "LibcontextError",
+    "ModuleDiff",
     "ModuleInfo",
     "PackageInfo",
     "PackageNotFoundError",
     "ParameterInfo",
+    "VariableDiff",
     "VariableInfo",
     "collect_package",
+    "diff_packages",
     "find_package_path",
     "inject_into_file",
     "inspect_file",
     "inspect_source",
+    "render_diff",
     "render_module",
     "render_package",
     "render_package_overview",
     "search_package",
+    "search_package_structured",
     "suggest_similar_packages",
 ]

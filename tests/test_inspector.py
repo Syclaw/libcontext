@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from libcontext.inspector import inspect_source, is_public_member
+import sys
+
+import pytest
+
+from libcontext.inspector import (
+    _is_type_alias_annotation,
+    inspect_source,
+    is_public_member,
+)
 
 # ---------------------------------------------------------------------------
 # Simple function extraction
@@ -393,3 +401,130 @@ def test_decorated_class():
     assert cls.name == "Config"
     assert "dataclass" in cls.decorators
     assert len(cls.class_variables) == 3
+
+
+# ---------------------------------------------------------------------------
+# TypeAlias detection — _is_type_alias_annotation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("annotation", "expected"),
+    [
+        ("TypeAlias", True),
+        ("typing.TypeAlias", True),
+        ("typing_extensions.TypeAlias", True),
+        ("mylib.TypeAlias", True),
+        ("Dict[str, TypeAlias]", False),
+        ("str", False),
+        (None, False),
+    ],
+)
+def test_is_type_alias_annotation(annotation: str | None, expected: bool):
+    assert _is_type_alias_annotation(annotation) is expected
+
+
+# ---------------------------------------------------------------------------
+# TypeAlias detection — PEP 613 in inspect_source
+# ---------------------------------------------------------------------------
+
+SAMPLE_PEP613_ALIAS = """
+from typing import TypeAlias, Union
+
+JsonValue: TypeAlias = Union[str, int, float, bool, None]
+VERSION: str = "1.0"
+"""
+
+
+def test_pep613_type_alias_detected():
+    module = inspect_source(SAMPLE_PEP613_ALIAS, module_name="test_mod")
+
+    alias = next(v for v in module.variables if v.name == "JsonValue")
+    assert alias.is_type_alias is True
+    assert alias.annotation == "TypeAlias"
+    assert alias.value == "Union[str, int, float, bool, None]"
+
+    version = next(v for v in module.variables if v.name == "VERSION")
+    assert version.is_type_alias is False
+
+
+SAMPLE_PEP613_QUALIFIED = """
+import typing
+
+IntOrStr: typing.TypeAlias = int | str
+"""
+
+
+def test_pep613_qualified_alias():
+    module = inspect_source(SAMPLE_PEP613_QUALIFIED, module_name="test_mod")
+
+    alias = next(v for v in module.variables if v.name == "IntOrStr")
+    assert alias.is_type_alias is True
+    assert alias.annotation == "typing.TypeAlias"
+
+
+SAMPLE_PEP613_CLASS = """
+from typing import TypeAlias
+
+class Container:
+    ItemType: TypeAlias = int
+    count: int = 0
+"""
+
+
+def test_pep613_alias_in_class():
+    module = inspect_source(SAMPLE_PEP613_CLASS, module_name="test_mod")
+
+    cls = module.classes[0]
+    alias = next(v for v in cls.class_variables if v.name == "ItemType")
+    assert alias.is_type_alias is True
+
+    count = next(v for v in cls.class_variables if v.name == "count")
+    assert count.is_type_alias is False
+
+
+# ---------------------------------------------------------------------------
+# TypeAlias detection — PEP 695 in inspect_source
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="PEP 695 type statement requires Python 3.12+",
+)
+def test_pep695_type_alias():
+    source = "type Point = tuple[int, int]\n"
+    module = inspect_source(source, module_name="test_mod")
+
+    alias = next(v for v in module.variables if v.name == "Point")
+    assert alias.is_type_alias is True
+    assert alias.annotation is None
+    assert "type Point" in alias.value
+    assert "tuple[int, int]" in alias.value
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="PEP 695 type statement requires Python 3.12+",
+)
+def test_pep695_generic_alias():
+    source = "type Vector[T] = list[T]\n"
+    module = inspect_source(source, module_name="test_mod")
+
+    alias = next(v for v in module.variables if v.name == "Vector")
+    assert alias.is_type_alias is True
+    assert "Vector[T]" in alias.value
+    assert "list[T]" in alias.value
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="PEP 695 type statement requires Python 3.12+",
+)
+def test_pep695_alias_in_class():
+    source = "class C:\n    type Inner = int\n"
+    module = inspect_source(source, module_name="test_mod")
+
+    cls = module.classes[0]
+    alias = next(v for v in cls.class_variables if v.name == "Inner")
+    assert alias.is_type_alias is True

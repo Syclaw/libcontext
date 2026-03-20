@@ -21,6 +21,8 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+_HAS_TYPE_ALIAS_NODE = hasattr(ast, "TypeAlias")
+
 # Dunder methods that are useful to document
 _USEFUL_DUNDERS = frozenset(
     {
@@ -82,6 +84,25 @@ _USEFUL_DUNDERS = frozenset(
         "__fspath__",
     }
 )
+
+
+def _is_type_alias_annotation(annotation: str | None) -> bool:
+    """Check if an annotation marks a PEP 613 explicit type alias.
+
+    Detects ``TypeAlias`` regardless of import style:
+    - ``from typing import TypeAlias`` -> annotation is ``"TypeAlias"``
+    - ``import typing`` -> annotation is ``"typing.TypeAlias"``
+    - ``from typing_extensions import TypeAlias`` -> annotation is ``"TypeAlias"``
+
+    Args:
+        annotation: Unparsed annotation string from ``ast.unparse()``.
+
+    Returns:
+        True if the annotation is a TypeAlias marker.
+    """
+    if annotation is None:
+        return False
+    return annotation == "TypeAlias" or annotation.endswith(".TypeAlias")
 
 
 def _unparse(node: ast.AST | None) -> str | None:
@@ -222,12 +243,30 @@ def _extract_class(
             inner_classes.append(_extract_class(item, qualname_prefix=qualname))
 
         elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            annotation_str = _unparse(item.annotation)
             class_variables.append(
                 VariableInfo(
                     name=item.target.id,
-                    annotation=_unparse(item.annotation),
+                    annotation=annotation_str,
                     value=_unparse(item.value),
                     line_number=item.lineno,
+                    is_type_alias=_is_type_alias_annotation(annotation_str),
+                )
+            )
+
+        elif _HAS_TYPE_ALIAS_NODE and isinstance(item, ast.TypeAlias):  # type: ignore[attr-defined]
+            alias_name = (
+                item.name.id
+                if isinstance(item.name, ast.Name)
+                else _unparse(item.name) or item.name
+            )
+            class_variables.append(
+                VariableInfo(
+                    name=str(alias_name),
+                    annotation=None,
+                    value=_unparse(item),
+                    line_number=item.lineno,
+                    is_type_alias=True,
                 )
             )
 
@@ -331,12 +370,30 @@ def inspect_source(
             functions.append(_extract_function(node))
 
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            annotation_str = _unparse(node.annotation)
             variables.append(
                 VariableInfo(
                     name=node.target.id,
-                    annotation=_unparse(node.annotation),
+                    annotation=annotation_str,
                     value=_unparse(node.value),
                     line_number=node.lineno,
+                    is_type_alias=_is_type_alias_annotation(annotation_str),
+                )
+            )
+
+        elif _HAS_TYPE_ALIAS_NODE and isinstance(node, ast.TypeAlias):  # type: ignore[attr-defined]
+            alias_name = (
+                node.name.id
+                if isinstance(node.name, ast.Name)
+                else _unparse(node.name) or node.name
+            )
+            variables.append(
+                VariableInfo(
+                    name=str(alias_name),
+                    annotation=None,
+                    value=_unparse(node),
+                    line_number=node.lineno,
+                    is_type_alias=True,
                 )
             )
 

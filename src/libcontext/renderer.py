@@ -12,15 +12,143 @@ The output format prioritises:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .inspector import is_public_member
 from .models import (
     ClassInfo,
+    DiffResult,
     FunctionInfo,
     ModuleInfo,
     PackageInfo,
     ParameterInfo,
     VariableInfo,
 )
+
+# ---------------------------------------------------------------------------
+# Overload detection & grouping
+# ---------------------------------------------------------------------------
+
+_OVERLOAD_DECORATORS = frozenset(
+    {
+        "overload",
+        "typing.overload",
+        "typing_extensions.overload",
+    }
+)
+
+
+def _is_overload(decorator: str) -> bool:
+    """Check if a decorator string represents ``@typing.overload``."""
+    return decorator in _OVERLOAD_DECORATORS
+
+
+def _has_overload(func: FunctionInfo) -> bool:
+    """Check if a function is decorated with ``@overload``."""
+    return any(_is_overload(d) for d in func.decorators)
+
+
+@dataclass
+class _OverloadGroup:
+    """A group of overloaded function signatures with a shared identity."""
+
+    name: str
+    qualname: str
+    overloads: list[FunctionInfo]
+    implementation: FunctionInfo | None
+
+
+def _group_overloads(
+    functions: list[FunctionInfo],
+) -> list[FunctionInfo | _OverloadGroup]:
+    """Group ``@overload``-decorated functions by name.
+
+    Non-overloaded functions pass through unchanged. For each set of
+    same-named functions where at least one has ``@overload``, produces
+    an ``_OverloadGroup``.
+
+    Args:
+        functions: Functions from a single scope (module or class).
+
+    Returns:
+        Mixed list of standalone functions and overload groups,
+        preserving the order of first appearance.
+    """
+    groups: dict[str, _OverloadGroup] = {}
+    order: list[str | FunctionInfo] = []
+
+    for func in functions:
+        if _has_overload(func):
+            if func.name not in groups:
+                groups[func.name] = _OverloadGroup(
+                    name=func.name,
+                    qualname=func.qualname,
+                    overloads=[],
+                    implementation=None,
+                )
+                order.append(func.name)
+            groups[func.name].overloads.append(func)
+        else:
+            if func.name in groups:
+                groups[func.name].implementation = func
+            else:
+                order.append(func)
+
+    result: list[FunctionInfo | _OverloadGroup] = []
+    for entry in order:
+        if isinstance(entry, str):
+            result.append(groups[entry])
+        else:
+            result.append(entry)
+    return result
+
+
+def _resolve_overload_docstring(group: _OverloadGroup) -> str | None:
+    """Select the best docstring for an overload group.
+
+    Priority:
+    1. Implementation docstring (most complete, matches Pylance/Sphinx)
+    2. First overload with a non-None docstring
+    3. None
+    """
+    if group.implementation and group.implementation.docstring:
+        return _first_paragraph(group.implementation.docstring)
+
+    for overload in group.overloads:
+        doc = _first_paragraph(overload.docstring)
+        if doc:
+            return doc
+
+    return None
+
+
+_VALID_KINDS = frozenset({"class", "function", "variable", "alias"})
+_DOCSTRING_MATCH_PREVIEW_LEN = 60
+
+
+def _matches(name: str, docstring: str | None, query_lower: str) -> str | None:
+    """Check if an entity matches the search query.
+
+    Returns:
+        ``"name"`` if matched on name, ``"docstring"`` if matched on
+        first-paragraph docstring, ``None`` if no match.
+    """
+    if query_lower in name.lower():
+        return "name"
+    first_para = _first_paragraph(docstring)
+    if first_para and query_lower in first_para.lower():
+        return "docstring"
+    return None
+
+
+def _format_docstring_match(docstring: str | None) -> str:
+    """Format a docstring match annotation."""
+    para = _first_paragraph(docstring) or ""
+    preview = para[:_DOCSTRING_MATCH_PREVIEW_LEN]
+    if len(para) > _DOCSTRING_MATCH_PREVIEW_LEN:
+        preview += "..."
+    preview = preview.replace('"', "'")
+    return f'*(matched in docstring: "{preview}")*'
 
 
 def _is_public_name(name: str, exports: set[str] | None) -> bool:
@@ -124,6 +252,73 @@ def _render_variable(var: VariableInfo) -> str:
     return f"- {''.join(parts)}"
 
 
+def _render_type_alias(alias: VariableInfo) -> str:
+    """Render a type alias as a Markdown list item.
+
+    Uses the original source syntax (PEP 613 or PEP 695) to match
+    what the developer will find in the code.
+    """
+    if alias.annotation is not None:
+        # PEP 613: X: TypeAlias = Union[A, B]
+        # Omit TypeAlias annotation — the section heading provides context
+        val = alias.value or "..."
+        return f"- `{alias.name} = {val}`"
+
+    # PEP 695: value contains the full statement from ast.unparse(node)
+    val = alias.value or "..."
+    return f"- `{val}`"
+
+
+def _render_overload_group(
+    group: _OverloadGroup,
+    *,
+    heading: str = "-",
+) -> str:
+    """Render an overload group as a single Markdown block.
+
+    Shows all overload signatures in one code block, hides the
+    implementation signature, and uses the best available docstring.
+    """
+    lines: list[str] = []
+
+    # Detect shared classmethod/staticmethod decorators
+    first = group.overloads[0]
+    shared_decs: list[str] = []
+    if first.is_classmethod:
+        shared_decs.append("`@classmethod`")
+    elif first.is_staticmethod:
+        shared_decs.append("`@staticmethod`")
+
+    dec_prefix = " ".join(shared_decs) + " " if shared_decs else ""
+    lines.append(f"{heading} {dec_prefix}`{group.name}` *(overloaded)*")
+
+    # Code block with all overload signatures
+    sig_lines: list[str] = []
+    for overload in group.overloads:
+        non_trivial = [
+            d
+            for d in overload.decorators
+            if d not in ("property", "classmethod", "staticmethod")
+            and not _is_overload(d)
+        ]
+        for dec in non_trivial:
+            sig_lines.append(f"@{dec}")
+        sig_lines.append(_format_signature(overload, compact=True))
+
+    lines.append("")
+    indent = "  " if heading == "-" else ""
+    lines.append(f"{indent}```python")
+    for sig_line in sig_lines:
+        lines.append(f"{indent}{sig_line}")
+    lines.append(f"{indent}```")
+
+    doc = _resolve_overload_docstring(group)
+    if doc:
+        lines.append(f"{indent}{doc}")
+
+    return "\n".join(lines)
+
+
 def _render_function(func: FunctionInfo, *, heading: str = "-") -> str:
     """Render a function as a Markdown block."""
     lines: list[str] = []
@@ -165,8 +360,22 @@ def _render_class(cls: ClassInfo) -> str:
         lines.append("")
         lines.append(doc)
 
-    # Class variables (public only)
-    public_vars = [v for v in cls.class_variables if is_public_member(v.name)]
+    # Type aliases (public only)
+    class_aliases = [
+        v for v in cls.class_variables if is_public_member(v.name) and v.is_type_alias
+    ]
+    if class_aliases:
+        lines.append("")
+        lines.append("**Type Aliases:**")
+        for alias in class_aliases:
+            lines.append(_render_type_alias(alias))
+
+    # Class variables (public only, excluding type aliases)
+    public_vars = [
+        v
+        for v in cls.class_variables
+        if is_public_member(v.name) and not v.is_type_alias
+    ]
     if public_vars:
         lines.append("")
         lines.append("**Attributes:**")
@@ -180,8 +389,11 @@ def _render_class(cls: ClassInfo) -> str:
     if visible_methods:
         lines.append("")
         lines.append("**Methods:**")
-        for method in visible_methods:
-            lines.append(_render_function(method))
+        for item in _group_overloads(visible_methods):
+            if isinstance(item, _OverloadGroup):
+                lines.append(_render_overload_group(item))
+            else:
+                lines.append(_render_function(item))
 
     # Inner classes
     public_inner = [c for c in cls.inner_classes if is_public_member(c.name)]
@@ -217,6 +429,18 @@ def render_module(module: ModuleInfo) -> str:
     # Determine public API boundary
     exports = set(module.all_exports) if module.all_exports is not None else None
 
+    # Type Aliases
+    type_aliases = [
+        v
+        for v in module.variables
+        if _is_public_name(v.name, exports) and v.is_type_alias
+    ]
+    if type_aliases:
+        lines.append("")
+        lines.append("**Type Aliases:**")
+        for alias in type_aliases:
+            lines.append(_render_type_alias(alias))
+
     # Classes
     public_classes = [c for c in module.classes if _is_public_name(c.name, exports)]
     for cls in public_classes:
@@ -228,15 +452,18 @@ def render_module(module: ModuleInfo) -> str:
     if public_functions:
         lines.append("")
         lines.append("**Functions:**")
-        for func in public_functions:
+        for item in _group_overloads(public_functions):
             lines.append("")
-            lines.append(_render_function(func))
+            if isinstance(item, _OverloadGroup):
+                lines.append(_render_overload_group(item))
+            else:
+                lines.append(_render_function(item))
 
-    # Constants (UPPER_CASE variables)
+    # Constants (UPPER_CASE variables, excluding type aliases)
     public_constants = [
         v
         for v in module.variables
-        if _is_public_name(v.name, exports) and v.name.isupper()
+        if _is_public_name(v.name, exports) and v.name.isupper() and not v.is_type_alias
     ]
     if public_constants:
         lines.append("")
@@ -244,11 +471,13 @@ def render_module(module: ModuleInfo) -> str:
         for var in public_constants:
             lines.append(_render_variable(var))
 
-    # Module-level variables (non-constant public variables)
+    # Module-level variables (non-constant, excluding type aliases)
     public_vars = [
         v
         for v in module.variables
-        if _is_public_name(v.name, exports) and not v.name.isupper()
+        if _is_public_name(v.name, exports)
+        and not v.name.isupper()
+        and not v.is_type_alias
     ]
     if public_vars:
         lines.append("")
@@ -305,15 +534,24 @@ def render_package_overview(package: PackageInfo) -> str:
         class_names = [
             c.name for c in module.classes if _is_public_name(c.name, exports)
         ]
-        func_names = [
-            f.name for f in module.functions if _is_public_name(f.name, exports)
+        public_functions = [
+            f for f in module.functions if _is_public_name(f.name, exports)
         ]
+        seen_names: set[str] = set()
+        overloaded_names = {f.name for f in public_functions if _has_overload(f)}
+        func_entries: list[str] = []
+        for func in public_functions:
+            if func.name in seen_names:
+                continue
+            seen_names.add(func.name)
+            suffix = " (overloaded)" if func.name in overloaded_names else ""
+            func_entries.append(f"{func.name}(){suffix}")
 
         parts: list[str] = []
         if class_names:
             parts.append(", ".join(class_names))
-        if func_names:
-            parts.append(", ".join(f"{n}()" for n in func_names))
+        if func_entries:
+            parts.append(", ".join(func_entries))
 
         suffix = f" — {'; '.join(parts)}" if parts else ""
         lines.append(f"- **`{module.name}`**{suffix}")
@@ -321,51 +559,325 @@ def render_package_overview(package: PackageInfo) -> str:
     return "\n".join(lines)
 
 
-def search_package(package: PackageInfo, query: str) -> str:
+def search_package(
+    package: PackageInfo,
+    query: str,
+    *,
+    kind: str | None = None,
+) -> str:
     """Search for classes, functions, or methods matching a query.
 
     Performs a case-insensitive substring search across all public names
-    in the package and returns matching items with their module location
-    and signature.
+    and first-paragraph docstrings.
 
     Args:
         package: The collected package information.
         query: Search term (case-insensitive substring match).
+        kind: Filter by entity type. Accepted values:
+            ``"class"``, ``"function"``, ``"variable"``, ``"alias"``,
+            or ``None`` (all types).
 
     Returns:
         Markdown-formatted search results, or a "no matches" message.
+
+    Raises:
+        ValueError: If *kind* is not a recognized value.
     """
+    if kind is not None and kind not in _VALID_KINDS:
+        valid = ", ".join(sorted(_VALID_KINDS))
+        msg = f"Invalid kind {kind!r}. Accepted values: {valid}"
+        raise ValueError(msg)
+
     query_lower = query.lower()
     results: list[str] = []
 
     for mod in package.non_empty_modules:
         exports = set(mod.all_exports) if mod.all_exports is not None else None
 
-        for cls in mod.classes:
-            if not _is_public_name(cls.name, exports):
-                continue
-            if query_lower in cls.name.lower():
-                bases = f"({', '.join(cls.bases)})" if cls.bases else ""
-                results.append(f"- class `{mod.name}.{cls.name}{bases}`")
-
-            for method in cls.methods:
-                if not is_public_member(method.name, is_method=True):
+        # Classes + Methods
+        if kind is None or kind in ("class", "function"):
+            for cls in mod.classes:
+                if not _is_public_name(cls.name, exports):
                     continue
-                if query_lower in method.name.lower():
-                    sig = _format_signature(method, compact=True)
-                    results.append(f"- method `{mod.name}.{cls.name}.{sig}`")
 
-        for func in mod.functions:
-            if not _is_public_name(func.name, exports):
-                continue
-            if query_lower in func.name.lower():
-                sig = _format_signature(func)
-                results.append(f"- function `{mod.name}.{sig}`")
+                # Class match
+                if kind is None or kind == "class":
+                    match_type = _matches(cls.name, cls.docstring, query_lower)
+                    if match_type:
+                        bases = f"({', '.join(cls.bases)})" if cls.bases else ""
+                        line = f"- class `{mod.name}.{cls.name}{bases}`"
+                        if match_type == "docstring":
+                            line += f"\n  {_format_docstring_match(cls.docstring)}"
+                        results.append(line)
+
+                # Method matches
+                if kind is None or kind == "function":
+                    visible_methods = [
+                        m
+                        for m in cls.methods
+                        if is_public_member(m.name, is_method=True)
+                    ]
+                    for item in _group_overloads(visible_methods):
+                        if isinstance(item, _OverloadGroup):
+                            doc = _resolve_overload_docstring(item)
+                            match_type = _matches(item.name, doc, query_lower)
+                            if match_type:
+                                sigs = "\n  ".join(
+                                    f"`{_format_signature(o, compact=True)}`"
+                                    for o in item.overloads
+                                )
+                                line = (
+                                    f"- method `{mod.name}.{cls.name}.{item.name}`"
+                                    f" (overloaded)\n  {sigs}"
+                                )
+                                if match_type == "docstring":
+                                    line += f"\n  {_format_docstring_match(doc)}"
+                                results.append(line)
+                        else:
+                            match_type = _matches(
+                                item.name, item.docstring, query_lower
+                            )
+                            if match_type:
+                                sig = _format_signature(item, compact=True)
+                                line = f"- method `{mod.name}.{cls.name}.{sig}`"
+                                if match_type == "docstring":
+                                    line += (
+                                        f"\n  {_format_docstring_match(item.docstring)}"
+                                    )
+                                results.append(line)
+
+        # Functions
+        if kind is None or kind == "function":
+            public_functions = [
+                f for f in mod.functions if _is_public_name(f.name, exports)
+            ]
+            for item in _group_overloads(public_functions):
+                if isinstance(item, _OverloadGroup):
+                    doc = _resolve_overload_docstring(item)
+                    match_type = _matches(item.name, doc, query_lower)
+                    if match_type:
+                        sigs = "\n  ".join(
+                            f"`{_format_signature(o, compact=False)}`"
+                            for o in item.overloads
+                        )
+                        line = (
+                            f"- function `{mod.name}.{item.name}`"
+                            f" (overloaded)\n  {sigs}"
+                        )
+                        if match_type == "docstring":
+                            line += f"\n  {_format_docstring_match(doc)}"
+                        results.append(line)
+                else:
+                    match_type = _matches(item.name, item.docstring, query_lower)
+                    if match_type:
+                        sig = _format_signature(item)
+                        line = f"- function `{mod.name}.{sig}`"
+                        if match_type == "docstring":
+                            line += f"\n  {_format_docstring_match(item.docstring)}"
+                        results.append(line)
+
+        # Variables (only with explicit kind filter)
+        if kind in ("variable", "alias"):
+            for var in mod.variables:
+                if not _is_public_name(var.name, exports):
+                    continue
+                is_alias = var.is_type_alias
+                if kind == "alias" and not is_alias:
+                    continue
+                if kind == "variable" and is_alias:
+                    continue
+                if query_lower in var.name.lower():
+                    ann = f": {var.annotation}" if var.annotation else ""
+                    val = f" = {var.value}" if var.value else ""
+                    results.append(f"- variable `{mod.name}.{var.name}{ann}{val}`")
 
     if not results:
         return f"No matches for '{query}' in {package.name}."
 
     return "\n".join(results)
+
+
+def search_package_structured(
+    package: PackageInfo,
+    query: str,
+    *,
+    kind: str | None = None,
+) -> list[dict[str, str]]:
+    """Search and return structured results for JSON output.
+
+    Same matching logic as ``search_package()`` but returns dicts
+    instead of Markdown strings. Uses ``_group_overloads()``
+    to deduplicate overloaded functions.
+
+    Args:
+        package: The collected package information.
+        query: Search term (case-insensitive substring match).
+        kind: Filter by entity type (same values as ``search_package``).
+
+    Returns:
+        List of result dicts with keys: kind, module, name, signature,
+        and optionally class, match_in, docstring_preview.
+
+    Raises:
+        ValueError: If *kind* is not a recognized value.
+    """
+    if kind is not None and kind not in _VALID_KINDS:
+        valid = ", ".join(sorted(_VALID_KINDS))
+        msg = f"Invalid kind {kind!r}. Accepted values: {valid}"
+        raise ValueError(msg)
+
+    query_lower = query.lower()
+    results: list[dict[str, str]] = []
+
+    for mod in package.non_empty_modules:
+        exports = set(mod.all_exports) if mod.all_exports is not None else None
+
+        # Classes + Methods
+        if kind is None or kind in ("class", "function"):
+            for cls in mod.classes:
+                if not _is_public_name(cls.name, exports):
+                    continue
+
+                # Class match
+                if kind is None or kind == "class":
+                    match_type = _matches(cls.name, cls.docstring, query_lower)
+                    if match_type:
+                        bases = f"({', '.join(cls.bases)})" if cls.bases else ""
+                        entry: dict[str, str] = {
+                            "kind": "class",
+                            "module": mod.name,
+                            "name": cls.name,
+                            "signature": f"class {cls.name}{bases}",
+                            "match_in": match_type,
+                        }
+                        if match_type == "docstring":
+                            para = _first_paragraph(cls.docstring) or ""
+                            entry["docstring_preview"] = para[
+                                :_DOCSTRING_MATCH_PREVIEW_LEN
+                            ]
+                        results.append(entry)
+
+                # Method matches
+                if kind is None or kind == "function":
+                    visible_methods = [
+                        m
+                        for m in cls.methods
+                        if is_public_member(m.name, is_method=True)
+                    ]
+                    for item in _group_overloads(visible_methods):
+                        if isinstance(item, _OverloadGroup):
+                            doc = _resolve_overload_docstring(item)
+                            match_type = _matches(item.name, doc, query_lower)
+                            if match_type:
+                                sigs = [
+                                    _format_signature(o, compact=True)
+                                    for o in item.overloads
+                                ]
+                                entry = {
+                                    "kind": "method",
+                                    "module": mod.name,
+                                    "class": cls.name,
+                                    "name": item.name,
+                                    "signature": sigs[0],
+                                    "match_in": match_type,
+                                }
+                                if len(sigs) > 1:
+                                    entry["overload_count"] = str(len(sigs))
+                                if match_type == "docstring" and doc:
+                                    entry["docstring_preview"] = doc[
+                                        :_DOCSTRING_MATCH_PREVIEW_LEN
+                                    ]
+                                results.append(entry)
+                        else:
+                            match_type = _matches(
+                                item.name, item.docstring, query_lower
+                            )
+                            if match_type:
+                                sig = _format_signature(item, compact=True)
+                                entry = {
+                                    "kind": "method",
+                                    "module": mod.name,
+                                    "class": cls.name,
+                                    "name": item.name,
+                                    "signature": sig,
+                                    "match_in": match_type,
+                                }
+                                if match_type == "docstring":
+                                    para = _first_paragraph(item.docstring) or ""
+                                    entry["docstring_preview"] = para[
+                                        :_DOCSTRING_MATCH_PREVIEW_LEN
+                                    ]
+                                results.append(entry)
+
+        # Functions
+        if kind is None or kind == "function":
+            public_functions = [
+                f for f in mod.functions if _is_public_name(f.name, exports)
+            ]
+            for item in _group_overloads(public_functions):
+                if isinstance(item, _OverloadGroup):
+                    doc = _resolve_overload_docstring(item)
+                    match_type = _matches(item.name, doc, query_lower)
+                    if match_type:
+                        sigs = [
+                            _format_signature(o, compact=False) for o in item.overloads
+                        ]
+                        entry = {
+                            "kind": "function",
+                            "module": mod.name,
+                            "name": item.name,
+                            "signature": sigs[0],
+                            "match_in": match_type,
+                        }
+                        if len(sigs) > 1:
+                            entry["overload_count"] = str(len(sigs))
+                        if match_type == "docstring" and doc:
+                            entry["docstring_preview"] = doc[
+                                :_DOCSTRING_MATCH_PREVIEW_LEN
+                            ]
+                        results.append(entry)
+                else:
+                    match_type = _matches(item.name, item.docstring, query_lower)
+                    if match_type:
+                        sig = _format_signature(item)
+                        entry = {
+                            "kind": "function",
+                            "module": mod.name,
+                            "name": item.name,
+                            "signature": sig,
+                            "match_in": match_type,
+                        }
+                        if match_type == "docstring":
+                            para = _first_paragraph(item.docstring) or ""
+                            entry["docstring_preview"] = para[
+                                :_DOCSTRING_MATCH_PREVIEW_LEN
+                            ]
+                        results.append(entry)
+
+        # Variables (only with explicit kind filter)
+        if kind in ("variable", "alias"):
+            for var in mod.variables:
+                if not _is_public_name(var.name, exports):
+                    continue
+                is_alias = var.is_type_alias
+                if kind == "alias" and not is_alias:
+                    continue
+                if kind == "variable" and is_alias:
+                    continue
+                if query_lower in var.name.lower():
+                    ann = f": {var.annotation}" if var.annotation else ""
+                    val = f" = {var.value}" if var.value else ""
+                    results.append(
+                        {
+                            "kind": "alias" if is_alias else "variable",
+                            "module": mod.name,
+                            "name": var.name,
+                            "signature": f"{var.name}{ann}{val}",
+                            "match_in": "name",
+                        }
+                    )
+
+    return results
 
 
 def render_package(
@@ -482,3 +994,162 @@ def inject_into_file(
     # Append
     separator = "\n\n" if existing.strip() else ""
     return f"{existing.rstrip()}{separator}{block}\n"
+
+
+# ---------------------------------------------------------------------------
+# Diff rendering
+# ---------------------------------------------------------------------------
+
+
+def render_diff(result: DiffResult) -> str:
+    """Render a DiffResult as human-readable Markdown.
+
+    Sections appear in order: Breaking Changes, Added, Modified.
+    Empty sections are omitted.
+
+    Args:
+        result: The diff to render.
+
+    Returns:
+        Markdown string, or a "no changes" message if the diff is empty.
+    """
+    if result.is_empty:
+        return "No changes detected."
+
+    lines: list[str] = []
+    lines.append(f"# API Diff: {result.package_name}")
+    lines.append("")
+
+    if result.old_version or result.new_version:
+        old_v = result.old_version or "unknown"
+        new_v = result.new_version or "unknown"
+        lines.append(f"**{old_v} → {new_v}**")
+        lines.append("")
+
+    # --- Breaking Changes ---
+    breaking_lines: list[str] = []
+
+    for mod_name in result.removed_modules:
+        breaking_lines.append(f"- **Removed module** `{mod_name}`")
+
+    for mod in result.modified_modules:
+        for fname in mod.removed_functions:
+            breaking_lines.append(f"- **Removed function** `{mod.module_name}.{fname}`")
+        for cname in mod.removed_classes:
+            breaking_lines.append(f"- **Removed class** `{mod.module_name}.{cname}`")
+        for fd in mod.modified_functions:
+            if fd.is_breaking:
+                for change in fd.changes:
+                    if _is_breaking_change_text(change):
+                        breaking_lines.append(
+                            f"- **{_capitalize(change)}** "
+                            f"in `{mod.module_name}.{fd.name}`"
+                        )
+        for cd in mod.modified_classes:
+            if cd.is_breaking:
+                for change in cd.changes:
+                    if _is_breaking_change_text(change):
+                        breaking_lines.append(
+                            f"- **{_capitalize(change)}** "
+                            f"in `{mod.module_name}.{cd.name}`"
+                        )
+                for mname in cd.removed_methods:
+                    breaking_lines.append(
+                        f"- **Removed method** `{mod.module_name}.{cd.name}.{mname}`"
+                    )
+                for mfd in cd.modified_methods:
+                    if mfd.is_breaking:
+                        for change in mfd.changes:
+                            if _is_breaking_change_text(change):
+                                breaking_lines.append(
+                                    f"- **{_capitalize(change)}** "
+                                    f"in `{mod.module_name}.{cd.name}"
+                                    f".{mfd.name}`"
+                                )
+
+    if breaking_lines:
+        lines.append("## Breaking Changes")
+        lines.append("")
+        lines.extend(breaking_lines)
+        lines.append("")
+
+    # --- Added ---
+    added_lines: list[str] = []
+
+    for mod_name in result.added_modules:
+        added_lines.append(f"- **Module** `{mod_name}`")
+
+    for mod in result.modified_modules:
+        for fname in mod.added_functions:
+            added_lines.append(f"- **Function** `{mod.module_name}.{fname}`")
+        for cname in mod.added_classes:
+            added_lines.append(f"- **Class** `{mod.module_name}.{cname}`")
+        for cd in mod.modified_classes:
+            for mname in cd.added_methods:
+                added_lines.append(
+                    f"- **Method** `{mod.module_name}.{cd.name}.{mname}`"
+                )
+
+    if added_lines:
+        lines.append("## Added")
+        lines.append("")
+        lines.extend(added_lines)
+        lines.append("")
+
+    # --- Modified ---
+    modified_lines: list[str] = []
+
+    for mod in result.modified_modules:
+        for fd in mod.modified_functions:
+            modified_lines.append(f"### `{mod.module_name}.{fd.name}`")
+            for change in fd.changes:
+                modified_lines.append(f"- {change}")
+            modified_lines.append("")
+
+        for cd in mod.modified_classes:
+            modified_lines.append(f"### `{mod.module_name}.{cd.name}`")
+            for change in cd.changes:
+                modified_lines.append(f"- {change}")
+            for mfd in cd.modified_methods:
+                change_str = ", ".join(mfd.changes)
+                modified_lines.append(f"- **method `{mfd.name}`**: {change_str}")
+            for vname in cd.added_variables:
+                modified_lines.append(f"- added attribute `{vname}`")
+            for vname in cd.removed_variables:
+                modified_lines.append(f"- removed attribute `{vname}`")
+            for vd in cd.modified_variables:
+                change_str = ", ".join(vd.changes)
+                modified_lines.append(f"- **attribute `{vd.name}`**: {change_str}")
+            modified_lines.append("")
+
+        for vd in mod.modified_variables:
+            modified_lines.append(f"### `{mod.module_name}.{vd.name}`")
+            for change in vd.changes:
+                modified_lines.append(f"- {change}")
+            modified_lines.append("")
+
+    if modified_lines:
+        lines.append("## Modified")
+        lines.append("")
+        lines.extend(modified_lines)
+
+    return "\n".join(lines).rstrip()
+
+
+def _is_breaking_change_text(change: str) -> bool:
+    """Check if a change description represents a breaking change."""
+    breaking_keywords = (
+        "removed",
+        "now required",
+        "changed from sync",
+        "changed from async",
+        "required parameter",
+    )
+    return any(kw in change.lower() for kw in breaking_keywords)
+
+
+def _capitalize(text: str) -> str:
+    """Capitalize the first letter without lowering the rest."""
+    if not text:
+        return text
+    return text[0].upper() + text[1:]

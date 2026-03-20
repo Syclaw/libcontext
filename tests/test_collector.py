@@ -13,13 +13,22 @@ from libcontext.collector import (
     _find_readme,
     _get_installed_package_names,
     _get_package_metadata,
+    _is_compiled_extension,
+    _merge_module,
+    _module_name_from_path,
     _should_skip_path,
+    _walk_package,
     collect_package,
     find_package_path,
     suggest_similar_packages,
 )
 from libcontext.config import LibcontextConfig
 from libcontext.exceptions import InspectionError, PackageNotFoundError
+from libcontext.models import (
+    FunctionInfo,
+    ModuleInfo,
+    VariableInfo,
+)
 
 
 def test_collect_local_directory(tmp_path: Path):
@@ -591,9 +600,7 @@ def test_debug_logging_for_package_resolution(tmp_path: Path, caplog) -> None:
 # Package name suggestions
 # ---------------------------------------------------------------------------
 
-_DISTS_PATH = (
-    "libcontext.collector.importlib.metadata.distributions"
-)
+_DISTS_PATH = "libcontext.collector.importlib.metadata.distributions"
 
 
 def _make_mock_dist(name: str, top_level: str | None = None) -> MagicMock:
@@ -696,3 +703,272 @@ def test_collect_package_error_no_suggestions() -> None:
         pytest.raises(PackageNotFoundError, match="Make sure it is installed"),
     ):
         collect_package("totally_nonexistent_pkg_xyz_999")
+
+
+# ---------------------------------------------------------------------------
+# Stub file .pyi support
+# ---------------------------------------------------------------------------
+
+
+def test_module_name_from_path_pyi(tmp_path: Path):
+    """_module_name_from_path handles .pyi files."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    pyi = pkg / "core.pyi"
+    pyi.touch()
+
+    assert _module_name_from_path(pyi, pkg, "mypkg") == "mypkg.core"
+
+
+def test_module_name_from_path_pyi_init(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    init = pkg / "__init__.pyi"
+    init.touch()
+
+    assert _module_name_from_path(init, pkg, "mypkg") == "mypkg"
+
+
+def test_should_skip_path_init_pyi():
+    assert _should_skip_path(("__init__.pyi",), include_private=False) is False
+
+
+def test_should_skip_path_private_pyi():
+    assert _should_skip_path(("_private.pyi",), include_private=False) is True
+    assert _should_skip_path(("_private.pyi",), include_private=True) is False
+
+
+def test_is_compiled_extension_so(tmp_path: Path):
+    so = tmp_path / "module.cpython-312-x86_64-linux-gnu.so"
+    so.touch()
+    assert _is_compiled_extension(so) is True
+
+
+def test_is_compiled_extension_py(tmp_path: Path):
+    py = tmp_path / "module.py"
+    py.touch()
+    assert _is_compiled_extension(py) is False
+
+
+def test_is_compiled_extension_dir_no_init(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    assert _is_compiled_extension(pkg) is True
+
+
+def test_is_compiled_extension_dir_with_init(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").touch()
+    assert _is_compiled_extension(pkg) is False
+
+
+def test_is_compiled_extension_dir_with_pyi_init(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.pyi").touch()
+    assert _is_compiled_extension(pkg) is False
+
+
+def test_merge_module_basic():
+    """Merge takes signatures from .pyi and docstrings from .py."""
+    py_mod = ModuleInfo(
+        name="pkg.core",
+        path="/src/pkg/core.py",
+        docstring="Module docstring.",
+        functions=[
+            FunctionInfo(
+                name="greet",
+                return_annotation=None,
+                docstring="Say hello.",
+                line_number=5,
+            ),
+        ],
+        variables=[
+            VariableInfo(name="X", value="42"),
+        ],
+    )
+
+    pyi_mod = ModuleInfo(
+        name="pkg.core",
+        path="/src/pkg/core.pyi",
+        functions=[
+            FunctionInfo(
+                name="greet",
+                return_annotation="str",
+                line_number=1,
+            ),
+        ],
+        variables=[
+            VariableInfo(name="X", annotation="int"),
+        ],
+    )
+
+    merged = _merge_module(py_mod, pyi_mod)
+
+    assert merged.docstring == "Module docstring."
+    assert merged.path == "/src/pkg/core.py"
+
+    func = merged.functions[0]
+    assert func.return_annotation == "str"
+    assert func.docstring == "Say hello."
+    assert func.line_number == 5
+
+    var = merged.variables[0]
+    assert var.annotation == "int"
+    assert var.value == "42"
+
+
+def test_merge_module_pyi_only_member():
+    """Members in .pyi but not .py are included."""
+    py_mod = ModuleInfo(name="pkg.core", functions=[])
+    pyi_mod = ModuleInfo(
+        name="pkg.core",
+        functions=[FunctionInfo(name="new_func", return_annotation="int")],
+    )
+    merged = _merge_module(py_mod, pyi_mod)
+    assert len(merged.functions) == 1
+    assert merged.functions[0].name == "new_func"
+
+
+def test_merge_module_py_only_member():
+    """Members in .py but not .pyi (partial stubs) are included."""
+    py_mod = ModuleInfo(
+        name="pkg.core",
+        functions=[FunctionInfo(name="old_func", docstring="Old.")],
+    )
+    pyi_mod = ModuleInfo(name="pkg.core", functions=[])
+    merged = _merge_module(py_mod, pyi_mod)
+    assert len(merged.functions) == 1
+    assert merged.functions[0].name == "old_func"
+
+
+def test_merge_module_preserves_is_type_alias():
+    """Merge preserves is_type_alias from .pyi."""
+    py_mod = ModuleInfo(
+        name="pkg.core",
+        variables=[VariableInfo(name="T", value="int")],
+    )
+    pyi_mod = ModuleInfo(
+        name="pkg.core",
+        variables=[
+            VariableInfo(name="T", annotation="TypeAlias", is_type_alias=True),
+        ],
+    )
+    merged = _merge_module(py_mod, pyi_mod)
+    assert merged.variables[0].is_type_alias is True
+
+
+def test_merge_module_all_exports_from_py():
+    """.py __all__ takes priority over .pyi."""
+    py_mod = ModuleInfo(name="pkg", all_exports=["A"])
+    pyi_mod = ModuleInfo(name="pkg", all_exports=["A", "B"])
+    merged = _merge_module(py_mod, pyi_mod)
+    assert merged.all_exports == ["A"]
+
+
+def test_walk_package_py_only(tmp_path: Path):
+    """Walk a package with .py files only — unchanged behavior."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Init."""\n', encoding="utf-8")
+    (pkg / "core.py").write_text(
+        'def hello() -> str:\n    """Hi."""\n    return "hi"\n',
+        encoding="utf-8",
+    )
+
+    config = LibcontextConfig()
+    modules = _walk_package(pkg, "mypkg", config)
+
+    assert len(modules) == 2
+    assert all(m.stub_source == "" for m in modules)
+
+
+def test_walk_package_pyi_only(tmp_path: Path):
+    """Walk a package with .pyi files only."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.pyi").write_text("", encoding="utf-8")
+    (pkg / "core.pyi").write_text("def hello() -> str: ...\n", encoding="utf-8")
+
+    config = LibcontextConfig()
+    modules = _walk_package(pkg, "mypkg", config)
+
+    names = [m.name for m in modules]
+    assert "mypkg.core" in names
+
+
+def test_walk_package_colocated_merge(tmp_path: Path):
+    """Walk a package with colocated .py + .pyi."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "core.py").write_text(
+        'def hello():\n    """Say hello."""\n    return "hi"\n',
+        encoding="utf-8",
+    )
+    (pkg / "core.pyi").write_text("def hello() -> str: ...\n", encoding="utf-8")
+
+    config = LibcontextConfig()
+    modules = _walk_package(pkg, "mypkg", config)
+
+    core = next(m for m in modules if m.name == "mypkg.core")
+    assert core.stub_source == "colocated"
+    func = core.functions[0]
+    assert func.return_annotation == "str"
+    assert func.docstring == "Say hello."
+
+
+def test_walk_package_standalone_stubs(tmp_path: Path):
+    """Walk a package with standalone stub directory."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "core.py").write_text(
+        'def hello():\n    """Say hello."""\n    return "hi"\n',
+        encoding="utf-8",
+    )
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    (stubs / "__init__.pyi").write_text("", encoding="utf-8")
+    (stubs / "core.pyi").write_text("def hello() -> str: ...\n", encoding="utf-8")
+
+    config = LibcontextConfig()
+    modules = _walk_package(pkg, "mypkg", config, stub_path=stubs)
+
+    core = next(m for m in modules if m.name == "mypkg.core")
+    assert core.stub_source == "standalone"
+    assert core.functions[0].return_annotation == "str"
+    assert core.functions[0].docstring == "Say hello."
+
+
+def test_walk_package_single_file_with_stub(tmp_path: Path):
+    """Single-file module with colocated .pyi stub."""
+    py_file = tmp_path / "mod.py"
+    pyi_file = tmp_path / "mod.pyi"
+    py_file.write_text('def f():\n    """Doc."""\n', encoding="utf-8")
+    pyi_file.write_text("def f() -> int: ...\n", encoding="utf-8")
+
+    config = LibcontextConfig()
+    modules = _walk_package(py_file, "mod", config)
+
+    assert len(modules) == 1
+    assert modules[0].stub_source == "colocated"
+    assert modules[0].functions[0].return_annotation == "int"
+    assert modules[0].functions[0].docstring == "Doc."
+
+
+def test_walk_package_pyi_syntax_error(tmp_path: Path):
+    """Invalid .pyi is skipped gracefully, .py used alone."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "core.py").write_text("def f(): pass\n", encoding="utf-8")
+    (pkg / "core.pyi").write_text("def f( -> broken\n", encoding="utf-8")
+
+    config = LibcontextConfig()
+    modules = _walk_package(pkg, "mypkg", config)
+
+    core = next(m for m in modules if m.name == "mypkg.core")
+    assert core.stub_source == ""

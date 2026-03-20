@@ -62,6 +62,11 @@ dmypy.json
 # ruff
 .ruff_cache/
 
+# Specs / internal docs
+specs/
+CHECKLIST_SPEC.md
+ROADMAP.md
+
 # OS files
 .DS_Store
 Thumbs.db

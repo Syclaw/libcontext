@@ -6,6 +6,7 @@ using mock PackageInfo data to avoid depending on installed packages.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -240,6 +241,127 @@ class TestSearchApi:
 
         assert "Error:" in result
 
+    def test_with_kind_filter(self):
+        with _patch_collect():
+            result = mcp_server.search_api("fakepkg", "Client", kind="class")
+
+        assert "Client" in result
+        assert "create_client" not in result
+
+    def test_json_format(self):
+        with _patch_collect():
+            result = mcp_server.search_api("fakepkg", "Client", output_format="json")
+
+        data = json.loads(result)
+        assert data["schema_version"] == 1
+        assert data["data"]["query"] == "Client"
+        assert len(data["data"]["results"]) > 0
+        assert data["data"]["results"][0]["name"] == "Client"
+
+    def test_json_format_with_kind(self):
+        with _patch_collect():
+            result = mcp_server.search_api(
+                "fakepkg", "Client", kind="class", output_format="json"
+            )
+
+        data = json.loads(result)
+        assert all(r["kind"] == "class" for r in data["data"]["results"])
+
+
+# ---------------------------------------------------------------------------
+# get_api_json
+# ---------------------------------------------------------------------------
+
+
+class TestGetApiJson:
+    def test_full_package(self):
+        with _patch_collect():
+            result = mcp_server.get_api_json("fakepkg")
+
+        data = json.loads(result)
+        assert data["schema_version"] == 1
+        assert data["data"]["name"] == "fakepkg"
+        assert len(data["data"]["modules"]) == 3
+
+    def test_single_module(self):
+        with _patch_collect():
+            result = mcp_server.get_api_json("fakepkg", module_name="fakepkg.utils")
+
+        data = json.loads(result)
+        assert data["schema_version"] == 1
+        assert data["data"]["name"] == "fakepkg.utils"
+
+    def test_module_not_found(self):
+        with _patch_collect():
+            result = mcp_server.get_api_json("fakepkg", module_name="fakepkg.nope")
+
+        assert "not found" in result
+        assert "fakepkg.utils" in result
+
+    def test_package_not_found(self):
+        with patch.object(
+            mcp_server,
+            "_collect_cached",
+            side_effect=PackageNotFoundError("nope"),
+        ):
+            result = mcp_server.get_api_json("nope")
+
+        assert "Error:" in result
+
+
+# ---------------------------------------------------------------------------
+# diff_api
+# ---------------------------------------------------------------------------
+
+
+class TestDiffApi:
+    def _make_old_new_json(self):
+        """Create two JSON strings with a simulated API change."""
+        import dataclasses
+
+        from libcontext.models import _serialize_envelope
+
+        old_pkg = _make_test_package()
+        new_pkg = _make_test_package()
+        # Remove 'retry' function from utils in new version
+        for mod in new_pkg.modules:
+            if mod.name == "fakepkg.utils":
+                mod.functions = []
+                break
+
+        old_json = json.dumps(_serialize_envelope(dataclasses.asdict(old_pkg)))
+        new_json = json.dumps(_serialize_envelope(dataclasses.asdict(new_pkg)))
+        return old_json, new_json
+
+    def test_markdown_output(self):
+        old_json, new_json = self._make_old_new_json()
+        result = mcp_server.diff_api(old_json, new_json)
+
+        assert "Breaking Changes" in result
+        assert "retry" in result
+
+    def test_json_output(self):
+        old_json, new_json = self._make_old_new_json()
+        result = mcp_server.diff_api(old_json, new_json, output_format="json")
+
+        data = json.loads(result)
+        assert data["schema_version"] == 1
+        assert len(data["data"]["modified_modules"]) > 0
+
+    def test_no_changes(self):
+        old_json, _ = self._make_old_new_json()
+        result = mcp_server.diff_api(old_json, old_json)
+
+        assert "No changes" in result
+
+    def test_invalid_json(self):
+        result = mcp_server.diff_api("{bad", "{}")
+        assert "Error:" in result
+
+    def test_invalid_envelope(self):
+        result = mcp_server.diff_api("{}", "{}")
+        assert "Error:" in result
+
 
 # ---------------------------------------------------------------------------
 # refresh_cache
@@ -249,4 +371,4 @@ class TestSearchApi:
 class TestRefreshCache:
     def test_clears_all(self):
         result = mcp_server.refresh_cache()
-        assert "all packages" in result
+        assert "Cache cleared" in result

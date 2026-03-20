@@ -4,7 +4,9 @@ Provides tools for progressive API discovery:
 
 1. ``get_package_overview`` — compact structural map (module + class/func names)
 2. ``get_module_api`` — full API reference for a single module
-3. ``search_api`` — find classes/functions by name across the package
+3. ``search_api`` — find classes/functions by name or docstring across the package
+4. ``get_api_json`` — full or single-module API as structured JSON
+5. ``diff_api`` — compare two API snapshots and report changes
 
 Run with::
 
@@ -18,18 +20,24 @@ Requires the ``mcp`` optional dependency::
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 from functools import lru_cache
 
 from mcp.server.fastmcp import FastMCP
 
+from . import cache as _cache
 from .collector import collect_package
+from .diff import diff_packages
 from .exceptions import PackageNotFoundError
-from .models import PackageInfo
+from .models import PackageInfo, _deserialize_envelope, _serialize_envelope
 from .renderer import (
+    render_diff,
     render_module,
     render_package_overview,
     search_package,
+    search_package_structured,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,34 +128,121 @@ def get_module_api(package_name: str, module_name: str) -> str:
 
 
 @mcp.tool()
-def search_api(package_name: str, query: str) -> str:
+def search_api(
+    package_name: str,
+    query: str,
+    kind: str | None = None,
+    output_format: str = "markdown",
+) -> str:
     """Search for classes, functions, or methods matching a query.
 
     Performs a case-insensitive substring search across all public names
-    in the package.  Returns matching items with their location and
-    signature.
+    and first-paragraph docstrings.
 
     Args:
         package_name: Importable package name.
         query: Search term (case-insensitive substring match).
+        kind: Filter by entity type (``class``, ``function``,
+            ``variable``, ``alias``). Omit to search all types.
+        output_format: Output format — ``markdown`` (human-readable) or
+            ``json`` (structured, easier for programmatic use).
     """
     try:
         pkg = _collect_cached(package_name)
     except PackageNotFoundError as exc:
         return f"Error: {exc}"
 
-    return search_package(pkg, query)
+    try:
+        if output_format == "json":
+            results = search_package_structured(pkg, query, kind=kind)
+            data = {"query": query, "package": package_name, "results": results}
+            envelope = _serialize_envelope(data)
+            return json.dumps(envelope, indent=2)
+        return search_package(pkg, query, kind=kind)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+
+@mcp.tool()
+def get_api_json(
+    package_name: str,
+    module_name: str | None = None,
+) -> str:
+    """Get the API structure of a Python package (or a single module) as JSON.
+
+    Returns a versioned JSON envelope suitable for programmatic consumption,
+    caching, or diff operations.
+
+    Args:
+        package_name: The importable package name.
+        module_name: Fully qualified module name to extract a single module.
+            Omit to get the full package.
+    """
+    try:
+        pkg = _collect_cached(package_name)
+    except PackageNotFoundError as exc:
+        return f"Error: {exc}"
+
+    if module_name is not None:
+        for mod in pkg.non_empty_modules:
+            if mod.name == module_name:
+                envelope = _serialize_envelope(dataclasses.asdict(mod))
+                return json.dumps(envelope, indent=2)
+        available = [m.name for m in pkg.non_empty_modules]
+        return (
+            f"Module '{module_name}' not found in {package_name}.\n"
+            f"Available modules: {', '.join(available)}"
+        )
+
+    envelope = _serialize_envelope(dataclasses.asdict(pkg))
+    return json.dumps(envelope, indent=2)
+
+
+@mcp.tool()
+def diff_api(old_json: str, new_json: str, output_format: str = "markdown") -> str:
+    """Compare two API snapshots and report added, removed, and modified symbols.
+
+    Accepts two JSON strings (as produced by ``get_api_json``) and returns
+    a diff highlighting breaking changes, additions, and modifications.
+
+    Args:
+        old_json: JSON string of the old API snapshot.
+        new_json: JSON string of the new API snapshot.
+        output_format: Output format — ``markdown`` or ``json``.
+    """
+    try:
+        old_raw = json.loads(old_json)
+        new_raw = json.loads(new_json)
+    except json.JSONDecodeError as exc:
+        return f"Error: invalid JSON — {exc}"
+
+    try:
+        old_data = _deserialize_envelope(old_raw)
+        new_data = _deserialize_envelope(new_raw)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    old_pkg = PackageInfo.from_dict(old_data)
+    new_pkg = PackageInfo.from_dict(new_data)
+    result = diff_packages(old_pkg, new_pkg)
+
+    if output_format == "json":
+        envelope = _serialize_envelope(dataclasses.asdict(result))
+        return json.dumps(envelope, indent=2)
+    return render_diff(result)
 
 
 @mcp.tool()
 def refresh_cache() -> str:
-    """Clear all cached package data so the next call re-inspects from disk.
+    """Clear all cached package data (in-memory and on disk).
 
     Use when a package has been updated (pip install --upgrade) and
-    the cached API data may be stale.
+    the cached API data may be stale. Clears both the in-process
+    LRU cache and the persistent disk cache.
     """
     _invalidate_cache()
-    return "Cache cleared for all packages."
+    disk_count = _cache.clear_all()
+    return f"Cache cleared: in-memory + {disk_count} disk entries."
 
 
 # ---------------------------------------------------------------------------

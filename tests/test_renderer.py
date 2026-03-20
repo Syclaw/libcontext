@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from libcontext.models import (
     ClassInfo,
     FunctionInfo,
@@ -11,10 +13,21 @@ from libcontext.models import (
     VariableInfo,
 )
 from libcontext.renderer import (
+    _format_docstring_match,
+    _group_overloads,
+    _has_overload,
+    _is_overload,
+    _matches,
+    _OverloadGroup,
+    _render_overload_group,
+    _render_type_alias,
+    _resolve_overload_docstring,
     inject_into_file,
     render_module,
     render_package,
     render_package_overview,
+    search_package,
+    search_package_structured,
 )
 
 
@@ -461,3 +474,715 @@ def test_render_package_overview_respects_all_exports():
     assert "Visible" in output
     assert "Internal" not in output
     assert "hidden_func" not in output
+
+
+# ---------------------------------------------------------------------------
+# _render_type_alias
+# ---------------------------------------------------------------------------
+
+
+def test_render_type_alias_pep613():
+    alias = VariableInfo(
+        name="JsonDict",
+        annotation="TypeAlias",
+        value="Dict[str, Any]",
+        is_type_alias=True,
+    )
+    assert _render_type_alias(alias) == "- `JsonDict = Dict[str, Any]`"
+
+
+def test_render_type_alias_pep695():
+    alias = VariableInfo(
+        name="Point",
+        annotation=None,
+        value="type Point = tuple[int, int]",
+        is_type_alias=True,
+    )
+    assert _render_type_alias(alias) == "- `type Point = tuple[int, int]`"
+
+
+def test_render_type_alias_pep695_generic():
+    alias = VariableInfo(
+        name="Vec",
+        annotation=None,
+        value="type Vec[T] = list[T]",
+        is_type_alias=True,
+    )
+    assert _render_type_alias(alias) == "- `type Vec[T] = list[T]`"
+
+
+def test_render_type_alias_no_value():
+    alias = VariableInfo(
+        name="X",
+        annotation="TypeAlias",
+        value=None,
+        is_type_alias=True,
+    )
+    assert _render_type_alias(alias) == "- `X = ...`"
+
+
+# ---------------------------------------------------------------------------
+# render_module with type aliases
+# ---------------------------------------------------------------------------
+
+
+def test_render_module_type_aliases_section():
+    """Type aliases appear in their own section, not in Constants or Variables."""
+    module = ModuleInfo(
+        name="mylib.types",
+        variables=[
+            VariableInfo(
+                name="JsonDict",
+                annotation="TypeAlias",
+                value="Dict[str, Any]",
+                is_type_alias=True,
+            ),
+            VariableInfo(
+                name="MAX_SIZE",
+                value="100",
+            ),
+            VariableInfo(
+                name="default_encoding",
+                annotation="str",
+                value="'utf-8'",
+            ),
+        ],
+        functions=[
+            FunctionInfo(name="noop", docstring="A no-op."),
+        ],
+    )
+
+    output = render_module(module)
+
+    assert "**Type Aliases:**" in output
+    assert "- `JsonDict = Dict[str, Any]`" in output
+
+    # Alias must NOT appear in Constants or Module Variables
+    constants_idx = output.find("**Constants:**")
+    vars_idx = output.find("**Module Variables:**")
+    aliases_idx = output.find("**Type Aliases:**")
+
+    assert aliases_idx < constants_idx, "Type Aliases should appear before Constants"
+    assert "JsonDict" not in output[constants_idx:]
+    assert "JsonDict" not in output[vars_idx:]
+
+
+def test_render_module_no_aliases_unchanged():
+    """Modules without aliases render identically to before."""
+    module = ModuleInfo(
+        name="mylib.core",
+        variables=[
+            VariableInfo(name="VERSION", value="'1.0'"),
+        ],
+        functions=[
+            FunctionInfo(name="main", docstring="Entry point."),
+        ],
+    )
+
+    output = render_module(module)
+
+    assert "**Type Aliases:**" not in output
+    assert "**Constants:**" in output
+
+
+def test_render_module_upper_alias_not_in_constants():
+    """An UPPER_CASE type alias should be in Type Aliases, not Constants."""
+    module = ModuleInfo(
+        name="mylib.types",
+        variables=[
+            VariableInfo(
+                name="JSON_TYPE",
+                annotation="TypeAlias",
+                value="Dict[str, Any]",
+                is_type_alias=True,
+            ),
+        ],
+        functions=[
+            FunctionInfo(name="noop", docstring="A no-op."),
+        ],
+    )
+
+    output = render_module(module)
+
+    assert "**Type Aliases:**" in output
+    assert "**Constants:**" not in output
+
+
+def test_render_class_type_aliases():
+    """Type aliases in classes appear in a dedicated section before Attributes."""
+    cls_info = ClassInfo(
+        name="Container",
+        class_variables=[
+            VariableInfo(
+                name="ItemType",
+                annotation="TypeAlias",
+                value="int",
+                is_type_alias=True,
+            ),
+            VariableInfo(name="count", annotation="int", value="0"),
+        ],
+    )
+    module = ModuleInfo(
+        name="mylib.core",
+        classes=[cls_info],
+        functions=[FunctionInfo(name="noop", docstring="No-op.")],
+    )
+
+    output = render_module(module)
+
+    assert "**Type Aliases:**" in output
+    assert "**Attributes:**" in output
+    # Type Aliases before Attributes
+    assert output.index("**Type Aliases:**") < output.index("**Attributes:**")
+
+
+# ---------------------------------------------------------------------------
+# Overload helpers
+# ---------------------------------------------------------------------------
+
+
+def test_is_overload():
+    assert _is_overload("overload") is True
+    assert _is_overload("typing.overload") is True
+    assert _is_overload("typing_extensions.overload") is True
+    assert _is_overload("cache") is False
+    assert _is_overload("my_overload") is False
+
+
+def test_has_overload():
+    assert _has_overload(FunctionInfo(name="f", decorators=["overload"])) is True
+    assert _has_overload(FunctionInfo(name="f", decorators=["cache"])) is False
+    assert _has_overload(FunctionInfo(name="f", decorators=[])) is False
+
+
+def _make_overloaded_functions() -> list[FunctionInfo]:
+    """Build a list of overloaded + normal functions for testing."""
+    return [
+        FunctionInfo(
+            name="get",
+            parameters=[ParameterInfo(name="url", annotation="str")],
+            return_annotation="Response",
+            decorators=["overload"],
+        ),
+        FunctionInfo(
+            name="get",
+            parameters=[
+                ParameterInfo(name="url", annotation="str"),
+                ParameterInfo(name="stream", annotation="Literal[True]"),
+            ],
+            return_annotation="StreamResponse",
+            decorators=["overload"],
+        ),
+        FunctionInfo(
+            name="get",
+            parameters=[
+                ParameterInfo(name="url", annotation="str"),
+                ParameterInfo(name="stream", annotation="bool", default="False"),
+            ],
+            return_annotation="Response | StreamResponse",
+            docstring="Send a GET request.",
+        ),
+        FunctionInfo(
+            name="parse",
+            parameters=[ParameterInfo(name="data", annotation="str")],
+            return_annotation="dict",
+            docstring="Parse data.",
+        ),
+    ]
+
+
+def test_group_overloads_basic():
+    funcs = _make_overloaded_functions()
+    grouped = _group_overloads(funcs)
+
+    assert len(grouped) == 2
+    assert isinstance(grouped[0], _OverloadGroup)
+    assert grouped[0].name == "get"
+    assert len(grouped[0].overloads) == 2
+    assert grouped[0].implementation is not None
+    assert grouped[0].implementation.docstring == "Send a GET request."
+    assert isinstance(grouped[1], FunctionInfo)
+    assert grouped[1].name == "parse"
+
+
+def test_group_overloads_no_overloads():
+    funcs = [
+        FunctionInfo(name="a"),
+        FunctionInfo(name="b"),
+    ]
+    grouped = _group_overloads(funcs)
+    assert len(grouped) == 2
+    assert all(isinstance(g, FunctionInfo) for g in grouped)
+
+
+def test_group_overloads_no_implementation():
+    funcs = [
+        FunctionInfo(name="f", decorators=["overload"]),
+        FunctionInfo(name="f", decorators=["overload"]),
+    ]
+    grouped = _group_overloads(funcs)
+    assert len(grouped) == 1
+    group = grouped[0]
+    assert isinstance(group, _OverloadGroup)
+    assert group.implementation is None
+    assert len(group.overloads) == 2
+
+
+def test_group_overloads_preserves_order():
+    funcs = [
+        FunctionInfo(name="a"),
+        FunctionInfo(name="f", decorators=["overload"]),
+        FunctionInfo(name="f", decorators=["overload"]),
+        FunctionInfo(name="f"),
+        FunctionInfo(name="b"),
+    ]
+    grouped = _group_overloads(funcs)
+    assert len(grouped) == 3
+    assert isinstance(grouped[0], FunctionInfo)
+    assert grouped[0].name == "a"
+    assert isinstance(grouped[1], _OverloadGroup)
+    assert grouped[1].name == "f"
+    assert isinstance(grouped[2], FunctionInfo)
+    assert grouped[2].name == "b"
+
+
+def test_resolve_overload_docstring_impl_priority():
+    group = _OverloadGroup(
+        name="f",
+        qualname="f",
+        overloads=[FunctionInfo(name="f", docstring="Overload doc.")],
+        implementation=FunctionInfo(name="f", docstring="Impl doc."),
+    )
+    assert _resolve_overload_docstring(group) == "Impl doc."
+
+
+def test_resolve_overload_docstring_fallback_to_overload():
+    group = _OverloadGroup(
+        name="f",
+        qualname="f",
+        overloads=[
+            FunctionInfo(name="f"),
+            FunctionInfo(name="f", docstring="Second overload."),
+        ],
+        implementation=FunctionInfo(name="f"),
+    )
+    assert _resolve_overload_docstring(group) == "Second overload."
+
+
+def test_resolve_overload_docstring_none():
+    group = _OverloadGroup(
+        name="f",
+        qualname="f",
+        overloads=[FunctionInfo(name="f")],
+        implementation=None,
+    )
+    assert _resolve_overload_docstring(group) is None
+
+
+def test_render_overload_group():
+    group = _OverloadGroup(
+        name="get",
+        qualname="get",
+        overloads=[
+            FunctionInfo(
+                name="get",
+                parameters=[ParameterInfo(name="url", annotation="str")],
+                return_annotation="Response",
+                decorators=["overload"],
+            ),
+            FunctionInfo(
+                name="get",
+                parameters=[
+                    ParameterInfo(name="url", annotation="str"),
+                    ParameterInfo(name="stream", annotation="Literal[True]"),
+                ],
+                return_annotation="StreamResponse",
+                decorators=["overload"],
+            ),
+        ],
+        implementation=FunctionInfo(
+            name="get",
+            docstring="Send a GET request.",
+        ),
+    )
+
+    output = _render_overload_group(group)
+    assert "*(overloaded)*" in output
+    assert "```python" in output
+    assert "def get(url: str) -> Response" in output
+    assert "def get(url: str, stream: Literal[True]) -> StreamResponse" in output
+    assert "Send a GET request." in output
+
+
+# ---------------------------------------------------------------------------
+# Integration: render_module with overloads
+# ---------------------------------------------------------------------------
+
+
+def test_render_module_with_overloads():
+    module = ModuleInfo(
+        name="mylib.api",
+        functions=_make_overloaded_functions(),
+    )
+
+    output = render_module(module)
+
+    assert "*(overloaded)*" in output
+    assert "```python" in output
+    assert "def get(url: str) -> Response" in output
+    assert "Parse data." in output
+
+
+def test_render_module_no_overloads_unchanged():
+    """Non-regression: module without overloads renders identically."""
+    module = ModuleInfo(
+        name="mylib.core",
+        functions=[
+            FunctionInfo(name="a", docstring="A."),
+            FunctionInfo(name="b", docstring="B."),
+        ],
+    )
+
+    output = render_module(module)
+
+    assert "*(overloaded)*" not in output
+    assert "a" in output
+    assert "b" in output
+
+
+def test_render_class_with_overloaded_methods():
+    cls_info = ClassInfo(
+        name="Client",
+        methods=[
+            FunctionInfo(
+                name="__init__",
+                parameters=[
+                    ParameterInfo(name="self"),
+                    ParameterInfo(name="url", annotation="str"),
+                ],
+                decorators=["overload"],
+            ),
+            FunctionInfo(
+                name="__init__",
+                parameters=[
+                    ParameterInfo(name="self"),
+                    ParameterInfo(name="config", annotation="Config"),
+                ],
+                decorators=["overload"],
+            ),
+            FunctionInfo(
+                name="__init__",
+                parameters=[ParameterInfo(name="self"), ParameterInfo(name="args")],
+                docstring="Initialize client.",
+            ),
+        ],
+    )
+    module = ModuleInfo(name="mylib", classes=[cls_info])
+    output = render_module(module)
+
+    assert "*(overloaded)*" in output
+    assert "Initialize client." in output
+
+
+def test_render_package_overview_overloads():
+    pkg = PackageInfo(
+        name="mylib",
+        modules=[
+            ModuleInfo(
+                name="mylib.api",
+                functions=_make_overloaded_functions(),
+            ),
+        ],
+    )
+
+    output = render_package_overview(pkg)
+
+    assert "get() (overloaded)" in output
+    assert "parse()" in output
+    assert output.count("get()") == 1
+
+
+def test_search_package_overloaded_function():
+    pkg = PackageInfo(
+        name="mylib",
+        modules=[
+            ModuleInfo(
+                name="mylib.api",
+                functions=_make_overloaded_functions(),
+            ),
+        ],
+    )
+
+    output = search_package(pkg, "get")
+
+    assert "(overloaded)" in output
+    assert "def get(url: str) -> Response" in output
+    assert output.count("function") == 1
+
+
+def test_search_package_normal_function():
+    pkg = PackageInfo(
+        name="mylib",
+        modules=[
+            ModuleInfo(
+                name="mylib.api",
+                functions=_make_overloaded_functions(),
+            ),
+        ],
+    )
+
+    output = search_package(pkg, "parse")
+
+    assert "(overloaded)" not in output
+    assert "def parse(data: str) -> dict" in output
+
+
+# ---------------------------------------------------------------------------
+# _matches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "docstring", "query", "expected"),
+    [
+        ("parse_url", "Parse a URL", "parse", "name"),
+        ("fetch", "Parse and retrieve data", "parse", "docstring"),
+        ("parse", "Parse data", "parse", "name"),
+        ("fetch", "Retrieve data", "parse", None),
+        ("fetch", None, "parse", None),
+        ("Parse", None, "parse", "name"),
+    ],
+)
+def test_matches(name: str, docstring: str | None, query: str, expected: str | None):
+    assert _matches(name, docstring, query) == expected
+
+
+def test_format_docstring_match_short():
+    result = _format_docstring_match("Parse a URL")
+    assert result == '*(matched in docstring: "Parse a URL")*'
+
+
+def test_format_docstring_match_long():
+    long_doc = "A" * 80
+    result = _format_docstring_match(long_doc)
+    assert "..." in result
+    assert len(result) < 100
+
+
+# ---------------------------------------------------------------------------
+# search_package kind validation
+# ---------------------------------------------------------------------------
+
+
+def test_search_package_invalid_kind():
+    pkg = PackageInfo(name="test", modules=[])
+    with pytest.raises(ValueError, match="Invalid kind"):
+        search_package(pkg, "query", kind="method")
+
+
+@pytest.mark.parametrize("kind", ["class", "function", "variable", "alias", None])
+def test_search_package_valid_kinds(kind: str | None):
+    pkg = PackageInfo(name="test", modules=[])
+    result = search_package(pkg, "query", kind=kind)
+    assert "No matches" in result
+
+
+# ---------------------------------------------------------------------------
+# search_package with kind filter
+# ---------------------------------------------------------------------------
+
+
+def _make_search_package() -> PackageInfo:
+    """Package with classes, functions, variables, and aliases for search tests."""
+    return PackageInfo(
+        name="testpkg",
+        modules=[
+            ModuleInfo(
+                name="testpkg.core",
+                classes=[
+                    ClassInfo(
+                        name="MyParser",
+                        docstring="XML parser.",
+                        methods=[
+                            FunctionInfo(
+                                name="run",
+                                parameters=[ParameterInfo(name="self")],
+                                docstring="Execute the parser.",
+                            ),
+                        ],
+                    ),
+                ],
+                functions=[
+                    FunctionInfo(
+                        name="parse_data",
+                        parameters=[ParameterInfo(name="data", annotation="str")],
+                        return_annotation="dict",
+                        docstring="Parse input data.",
+                    ),
+                ],
+                variables=[
+                    VariableInfo(name="MAX_SIZE", value="100"),
+                    VariableInfo(
+                        name="JsonDict",
+                        annotation="TypeAlias",
+                        value="Dict[str, Any]",
+                        is_type_alias=True,
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def test_search_kind_class():
+    pkg = _make_search_package()
+    output = search_package(pkg, "parser", kind="class")
+    assert "class" in output
+    assert "function" not in output
+    assert "method" not in output
+
+
+def test_search_kind_function():
+    pkg = _make_search_package()
+    output = search_package(pkg, "parse", kind="function")
+    assert "function" in output or "method" in output
+    assert "class" not in output
+
+
+def test_search_kind_variable():
+    pkg = _make_search_package()
+    output = search_package(pkg, "MAX", kind="variable")
+    assert "MAX_SIZE" in output
+    assert "JsonDict" not in output
+
+
+def test_search_kind_alias():
+    pkg = _make_search_package()
+    output = search_package(pkg, "Json", kind="alias")
+    assert "JsonDict" in output
+    assert "MAX_SIZE" not in output
+
+
+# ---------------------------------------------------------------------------
+# Docstring search
+# ---------------------------------------------------------------------------
+
+
+def test_search_docstring_match_function():
+    pkg = _make_search_package()
+    output = search_package(pkg, "input data")
+    assert "parse_data" in output
+    assert "matched in docstring" in output
+
+
+def test_search_docstring_match_class():
+    pkg = _make_search_package()
+    output = search_package(pkg, "xml")
+    assert "MyParser" in output
+    assert "matched in docstring" in output
+
+
+def test_search_docstring_match_method():
+    pkg = _make_search_package()
+    output = search_package(pkg, "execute")
+    assert "run" in output
+    assert "matched in docstring" in output
+
+
+def test_search_name_match_no_docstring_annotation():
+    """Name match should NOT have docstring annotation."""
+    pkg = _make_search_package()
+    output = search_package(pkg, "parse_data")
+    assert "parse_data" in output
+    assert "matched in docstring" not in output
+
+
+def test_search_no_kind_no_variables():
+    """Without kind filter, variables should NOT appear in results."""
+    pkg = _make_search_package()
+    output = search_package(pkg, "MAX")
+    assert "MAX_SIZE" not in output
+
+
+# ---------------------------------------------------------------------------
+# search_package_structured
+# ---------------------------------------------------------------------------
+
+
+def test_structured_search_class():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "parser", kind="class")
+    assert len(results) == 1
+    assert results[0]["kind"] == "class"
+    assert results[0]["name"] == "MyParser"
+    assert results[0]["module"] == "testpkg.core"
+    assert results[0]["match_in"] == "name"
+    assert "signature" in results[0]
+
+
+def test_structured_search_function():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "parse", kind="function")
+    names = [r["name"] for r in results]
+    assert "parse_data" in names
+
+
+def test_structured_search_method():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "run")
+    methods = [r for r in results if r["kind"] == "method"]
+    assert len(methods) == 1
+    assert methods[0]["class"] == "MyParser"
+
+
+def test_structured_search_variable():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "MAX", kind="variable")
+    assert len(results) == 1
+    assert results[0]["kind"] == "variable"
+    assert results[0]["name"] == "MAX_SIZE"
+
+
+def test_structured_search_alias():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "Json", kind="alias")
+    assert len(results) == 1
+    assert results[0]["kind"] == "alias"
+    assert results[0]["name"] == "JsonDict"
+
+
+def test_structured_search_docstring_match():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "xml")
+    assert len(results) == 1
+    assert results[0]["match_in"] == "docstring"
+    assert "docstring_preview" in results[0]
+
+
+def test_structured_search_no_results():
+    pkg = _make_search_package()
+    results = search_package_structured(pkg, "nonexistent")
+    assert results == []
+
+
+def test_structured_search_invalid_kind():
+    pkg = PackageInfo(name="test", modules=[])
+    with pytest.raises(ValueError, match="Invalid kind"):
+        search_package_structured(pkg, "query", kind="method")
+
+
+def test_structured_search_overloaded_function():
+    pkg = PackageInfo(
+        name="mylib",
+        modules=[
+            ModuleInfo(
+                name="mylib.api",
+                functions=_make_overloaded_functions(),
+            ),
+        ],
+    )
+    results = search_package_structured(pkg, "get")
+    funcs = [r for r in results if r["kind"] == "function"]
+    assert len(funcs) == 1
+    assert funcs[0]["name"] == "get"
+    assert "overload_count" in funcs[0]
