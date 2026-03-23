@@ -1,12 +1,18 @@
 """CLI entry point for libcontext.
 
-Provides the ``libctx`` command with two subcommands:
+Provides the ``libctx`` command with subcommands:
 
 ``inspect``
     Generate LLM-optimised Markdown context from installed Python packages.
 
 ``install``
     Install libcontext integration files (skills, MCP) into the current project.
+
+``diff``
+    Compare two API snapshots and show what changed.
+
+``cache``
+    Manage the disk cache (``list``, ``clear``).
 
 Usage examples::
 
@@ -18,6 +24,12 @@ Usage examples::
     libctx install --skills
     libctx install --mcp --target vscode
     libctx install --all --target all
+
+    libctx diff old.json new.json
+
+    libctx cache list
+    libctx cache clear
+    libctx cache clear requests
 """
 
 from __future__ import annotations
@@ -759,10 +771,68 @@ def cache() -> None:
 
 
 @cache.command()
-def clear() -> None:
-    """Remove all cached API snapshots."""
-    count = _cache.clear_all()
-    click.echo(f"Cleared {count} cache entries.")
+@click.argument("package", required=False, default=None)
+def clear(package: str | None) -> None:
+    """Remove cached API snapshots.
+
+    When PACKAGE is given, only entries for that package are removed.
+    Without arguments, all entries are cleared.
+    """
+    if package is not None:
+        count = _cache.clear_package(package)
+        label = f"for {package!r}" if count else f"no entries found for {package!r}"
+    else:
+        count = _cache.clear_all()
+        label = "cache entries" if count else "cache entries (already empty)"
+    click.echo(f"Cleared {count} {label}.")
+
+
+@cache.command(name="list")
+def list_() -> None:
+    """Show cached API snapshots."""
+    entries = _cache.list_entries()
+    if not entries:
+        click.echo("Cache is empty.")
+        return
+    total_bytes = 0
+    for entry in entries:
+        age = _format_age(entry.cached_at)
+        size = _format_size(entry.size_bytes)
+        click.echo(f"  {entry.package} {entry.version}  ({size}, {age})")
+        total_bytes += entry.size_bytes
+    click.echo(f"\n{len(entries)} entries, {_format_size(total_bytes)} total.")
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format byte count as a human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} kB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def _format_age(iso_timestamp: str) -> str:
+    """Format an ISO timestamp as a relative age string."""
+    import datetime
+
+    try:
+        cached = datetime.datetime.fromisoformat(iso_timestamp)
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+        delta = now - cached
+        seconds = int(delta.total_seconds())
+        if seconds < 60:
+            return "just now"
+        if seconds < 3600:
+            m = seconds // 60
+            return f"{m}m ago"
+        if seconds < 86400:
+            h = seconds // 3600
+            return f"{h}h ago"
+        d = seconds // 86400
+        return f"{d}d ago"
+    except (ValueError, TypeError):
+        return "unknown age"
 
 
 # ---------------------------------------------------------------------------

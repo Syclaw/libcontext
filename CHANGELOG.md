@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`--version` flag**: `libctx --version` displays the installed version, read from package metadata.
+- **`cache list`**: new subcommand showing cached packages with version, size, and relative age.
+- **`cache clear <package>`**: selective cache clearing by package name (normalises hyphens and case). Without argument, `cache clear` still removes all entries as before.
 
 ## [0.4.0] - 2026-03-23
 

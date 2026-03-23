@@ -8,30 +8,38 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Typed](https://img.shields.io/badge/typed-mypy-blue.svg)](https://mypy-lang.org/)
 
-> Make your AI coding assistant aware of any Python library's API — on demand, not always-on.
+> Context-efficient API references for LLM toolchains — structured, on-demand, not always-on.
 
 **libcontext** inspects any installed Python package via static AST analysis (no code execution) and generates compact Markdown API references. It integrates with Claude Code (via a `/lib` skill) and VS Code Copilot (via an MCP server) to provide **progressive disclosure** — only loading API context when you actually need it, avoiding context window pollution.
 
 ## Why This Exists
 
-When you ask an AI assistant how to use a library, the quality of the output depends entirely on what the model knows about that library's API. For many real-world scenarios, the model is working blind:
+LLMs can often use popular libraries correctly from training data alone. For well-known packages like `requests` or `flask`, libcontext adds little value. The real problems arise in specific scenarios:
 
 - **Internal / private libraries** — Zero training data exists. The model has never seen the API.
-- **Niche open-source packages** — Sparse or outdated training data leads to hallucinated methods and wrong signatures.
+- **Niche open-source packages** — Sparse or outdated training data leads to hallucinated methods and wrong signatures. GPT-4o achieves only 38% valid invocations on low-frequency APIs ([Amazon Science, ICSE 2025](https://www.amazon.science/publications/on-mitigating-code-llm-hallucinations-with-api-documentation)).
 - **New versions of any library** — Training data has a cutoff. The model knows v2, you're using v3.
 
-Dumping entire API references into always-on instruction files (like `copilot-instructions.md` or `CLAUDE.md`) wastes context window on every interaction — even when you're not using that library. Research ([ReadMe.LLM, UC Berkeley 2025](https://arxiv.org/abs/2504.15870)) confirms that excessive context triggers hallucinations and degrades output quality.
+Even when an LLM could read source files directly, structured API summaries are more context-efficient: providing API documentation via retrieval improves pass rates by 83–220% compared to no documentation, while consuming far fewer tokens than raw source code ([arXiv 2503.15231, March 2025](https://arxiv.org/abs/2503.15231)).
 
-libcontext solves this with **progressive disclosure**: overview first, then drill into specific modules only when needed.
+Dumping entire API references into always-on instruction files wastes context window on every interaction. Selective retrieval outperforms always-on injection — always-on docs actually hurt performance on well-known APIs ([Amazon Science, ICSE 2025](https://www.amazon.science/publications/on-mitigating-code-llm-hallucinations-with-api-documentation)).
+
+libcontext addresses this with **progressive disclosure**: overview first, then drill into specific modules only when needed.
 
 ## When libcontext makes the biggest difference
 
 | Scenario | Impact | Why |
 |---|---|---|
-| **Internal / private libraries** | Critical | Zero training data exists for proprietary code |
-| **Niche open-source packages** | High | Sparse training data leads to hallucinated methods |
+| **Internal / private libraries** | Critical | Zero training data — the model has never seen the API |
+| **Niche open-source packages** | High | Sparse training data; 19.7% of LLM package suggestions are hallucinated ([USENIX Security 2025](https://www.usenix.org/publications/loginonline/we-have-package-you-comprehensive-analysis-package-hallucinations-code)) |
 | **New versions of any library** | High | Training cutoff — the LLM knows v2, you're using v3 |
-| **Popular, stable libraries** | Low | The LLM already has good knowledge from training data |
+| **Popular, stable libraries** | Low | The LLM already has good knowledge from training data — libcontext adds little here |
+
+### What libcontext does NOT do
+
+- **Replace reading source code** — LLMs with tool access (Claude Code, Cursor) can read files directly. For popular libraries, that's often sufficient.
+- **Guarantee correctness** — Even with perfect API docs, LLMs still make errors. Research shows pass rates of 74–91% with target documentation, not 100% ([arXiv 2503.15231](https://arxiv.org/abs/2503.15231)).
+- **Provide usage examples** — libcontext extracts signatures and docstrings, not example code. Research indicates examples have the highest impact on code generation quality.
 
 ## Quick Start
 
@@ -109,8 +117,10 @@ libctx diff old.json new.json
 # Bypass disk cache
 libctx inspect requests --no-cache
 
-# Clear all cached API data
-libctx cache clear
+# Cache management
+libctx cache list               # show cached packages with size and age
+libctx cache clear               # clear all cached API data
+libctx cache clear requests      # clear only the entries for one package
 ```
 
 ### AST Analysis

@@ -258,6 +258,74 @@ def clear_all() -> int:
     return count
 
 
+def clear_package(package_name: str) -> int:
+    """Remove cached entries matching a package name.
+
+    Matches entries whose embedded ``name`` field equals *package_name*
+    (case-insensitive, normalised with hyphens → underscores).
+
+    Args:
+        package_name: Package name to clear.
+
+    Returns:
+        Number of entries removed.
+    """
+    target = package_name.lower().replace("-", "_")
+    cache_dir = _get_cache_dir()
+    count = 0
+    for f in cache_dir.glob("*.json"):
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            data = _deserialize_envelope(raw)
+        except (json.JSONDecodeError, ValueError, OSError):
+            continue
+        name = data.get("name", "")
+        if isinstance(name, str) and name.lower().replace("-", "_") == target:
+            _safe_delete(f)
+            count += 1
+    return count
+
+
+@dataclass
+class CacheEntry:
+    """Summary of a single cache entry for display."""
+
+    package: str
+    version: str
+    cached_at: str
+    size_bytes: int
+    file_path: Path
+
+
+def list_entries() -> list[CacheEntry]:
+    """List all cached API snapshots with metadata.
+
+    Returns:
+        List of :class:`CacheEntry` sorted by package name then version.
+    """
+    cache_dir = _get_cache_dir()
+    entries: list[CacheEntry] = []
+    for f in cache_dir.glob("*.json"):
+        try:
+            size = f.stat().st_size
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            data = _deserialize_envelope(raw)
+        except (json.JSONDecodeError, ValueError, OSError):
+            continue
+        meta = data.get("_cache_meta", {})
+        entries.append(
+            CacheEntry(
+                package=data.get("name", "unknown"),
+                version=data.get("version", "unknown"),
+                cached_at=meta.get("cached_at", "unknown"),
+                size_bytes=size,
+                file_path=f,
+            )
+        )
+    entries.sort(key=lambda e: (e.package.lower(), e.version))
+    return entries
+
+
 def _cache_filename(
     package_name: str,
     version: str | None,

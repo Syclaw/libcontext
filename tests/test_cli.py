@@ -860,6 +860,152 @@ def test_cache_clear(tmp_path: Path, monkeypatch) -> None:
     assert "Cleared" in result.output
 
 
+def test_cache_clear_specific_package(tmp_path: Path, monkeypatch) -> None:
+    """``libctx cache clear <package>`` removes only that package."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    from libcontext import cache as _c
+    from libcontext.models import FunctionInfo, ModuleInfo, PackageInfo
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "mod.py").write_text("# code")
+
+    for name in ("alpha", "beta"):
+        pkg = PackageInfo(
+            name=name,
+            version="1.0.0",
+            modules=[
+                ModuleInfo(name=f"{name}.core", functions=[FunctionInfo(name="f")])
+            ],
+        )
+        _c.save(pkg, src)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["cache", "clear", "alpha"])
+
+    assert result.exit_code == 0
+    assert "1" in result.output
+    assert "alpha" in result.output
+
+    remaining = _c.list_entries()
+    assert len(remaining) == 1
+    assert remaining[0].package == "beta"
+
+
+def test_cache_list_empty(tmp_path: Path, monkeypatch) -> None:
+    """``libctx cache list`` on empty cache shows message."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["cache", "list"])
+
+    assert result.exit_code == 0
+    assert "empty" in result.output.lower()
+
+
+def test_cache_list_shows_entries(tmp_path: Path, monkeypatch) -> None:
+    """``libctx cache list`` displays cached packages."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    from libcontext import cache as _c
+    from libcontext.models import FunctionInfo, ModuleInfo, PackageInfo
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "mod.py").write_text("# code")
+
+    pkg = PackageInfo(
+        name="mypkg",
+        version="3.2.1",
+        modules=[ModuleInfo(name="mypkg.core", functions=[FunctionInfo(name="f")])],
+    )
+    _c.save(pkg, src)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["cache", "list"])
+
+    assert result.exit_code == 0
+    assert "mypkg" in result.output
+    assert "3.2.1" in result.output
+    assert "1 entries" in result.output
+
+
+# ---------------------------------------------------------------------------
+# _format_size / _format_age helpers
+# ---------------------------------------------------------------------------
+
+
+def test_format_size_bytes() -> None:
+    from libcontext.cli import _format_size
+
+    assert _format_size(500) == "500 B"
+
+
+def test_format_size_kilobytes() -> None:
+    from libcontext.cli import _format_size
+
+    assert _format_size(2048) == "2.0 kB"
+
+
+def test_format_size_megabytes() -> None:
+    from libcontext.cli import _format_size
+
+    assert _format_size(5 * 1024 * 1024) == "5.0 MB"
+
+
+def test_format_age_just_now() -> None:
+    import datetime
+
+    from libcontext.cli import _format_age
+
+    now = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
+    assert _format_age(now) == "just now"
+
+
+def test_format_age_minutes() -> None:
+    import datetime
+
+    from libcontext.cli import _format_age
+
+    ts = (
+        datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(minutes=15)
+    ).isoformat()
+    assert _format_age(ts) == "15m ago"
+
+
+def test_format_age_hours() -> None:
+    import datetime
+
+    from libcontext.cli import _format_age
+
+    ts = (
+        datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(hours=3)
+    ).isoformat()
+    assert _format_age(ts) == "3h ago"
+
+
+def test_format_age_days() -> None:
+    import datetime
+
+    from libcontext.cli import _format_age
+
+    ts = (
+        datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=7)
+    ).isoformat()
+    assert _format_age(ts) == "7d ago"
+
+
+def test_format_age_invalid() -> None:
+    from libcontext.cli import _format_age
+
+    assert _format_age("not-a-timestamp") == "unknown age"
+    assert _format_age("") == "unknown age"
+
+
 # ---------------------------------------------------------------------------
 # diff subcommand
 # ---------------------------------------------------------------------------

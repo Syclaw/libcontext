@@ -12,6 +12,8 @@ from libcontext.cache import (
     _evict_oldest,
     _get_cache_dir,
     clear_all,
+    clear_package,
+    list_entries,
     load,
     save,
 )
@@ -284,6 +286,166 @@ def test_clear_all_empty(tmp_path, monkeypatch):
 
     count = clear_all()
     assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# clear_package
+# ---------------------------------------------------------------------------
+
+
+def test_clear_package_removes_matching(tmp_path, monkeypatch):
+    """Only entries for the given package are removed."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    pkg_a = PackageInfo(
+        name="alpha",
+        version="1.0.0",
+        modules=[ModuleInfo(name="alpha.core", functions=[FunctionInfo(name="f")])],
+    )
+    pkg_b = PackageInfo(
+        name="beta",
+        version="2.0.0",
+        modules=[ModuleInfo(name="beta.core", functions=[FunctionInfo(name="g")])],
+    )
+    save(pkg_a, src_dir)
+    save(pkg_b, src_dir)
+
+    count = clear_package("alpha")
+    assert count == 1
+
+    remaining = list_entries()
+    assert len(remaining) == 1
+    assert remaining[0].package == "beta"
+
+
+def test_clear_package_normalises_name(tmp_path, monkeypatch):
+    """Hyphens and case differences are normalised for matching."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    pkg = PackageInfo(
+        name="my_package",
+        version="1.0.0",
+        modules=[ModuleInfo(name="my_package.core", functions=[])],
+    )
+    save(pkg, src_dir)
+
+    count = clear_package("My-Package")
+    assert count == 1
+
+
+def test_clear_package_no_match(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+    _get_cache_dir()
+
+    count = clear_package("nonexistent")
+    assert count == 0
+
+
+def test_clear_package_skips_corrupted(tmp_path, monkeypatch):
+    """Corrupted JSON files are skipped without crashing."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    cache_dir = _get_cache_dir()
+    (cache_dir / "bad.json").write_text("not json", encoding="utf-8")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    pkg = PackageInfo(
+        name="goodpkg",
+        version="1.0.0",
+        modules=[ModuleInfo(name="goodpkg.core", functions=[])],
+    )
+    save(pkg, src_dir)
+
+    count = clear_package("goodpkg")
+    assert count == 1
+    # Corrupted file still exists (not matched, not deleted)
+    assert (cache_dir / "bad.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# list_entries
+# ---------------------------------------------------------------------------
+
+
+def test_list_entries_returns_saved_packages(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    save(_make_pkg("1.0.0"), src_dir)
+
+    entries = list_entries()
+    assert len(entries) == 1
+    assert entries[0].package == "testpkg"
+    assert entries[0].version == "1.0.0"
+    assert entries[0].size_bytes > 0
+    assert entries[0].cached_at != "unknown"
+
+
+def test_list_entries_sorted_by_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    for name in ("zeta", "alpha", "mid"):
+        pkg = PackageInfo(
+            name=name,
+            version="1.0.0",
+            modules=[ModuleInfo(name=f"{name}.core", functions=[])],
+        )
+        save(pkg, src_dir)
+
+    entries = list_entries()
+    names = [e.package for e in entries]
+    assert names == ["alpha", "mid", "zeta"]
+
+
+def test_list_entries_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+    _get_cache_dir()
+
+    entries = list_entries()
+    assert entries == []
+
+
+def test_list_entries_skips_corrupted(tmp_path, monkeypatch):
+    """Corrupted files are silently skipped."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    cache_dir = _get_cache_dir()
+    (cache_dir / "bad.json").write_text("not json", encoding="utf-8")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+    save(_make_pkg(), src_dir)
+
+    entries = list_entries()
+    assert len(entries) == 1
+    assert entries[0].package == "testpkg"
 
 
 # ---------------------------------------------------------------------------
