@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-23
+
 ### Added
 
 - **`--version` flag**: `libctx --version` displays the installed version, read from package metadata.
@@ -99,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Free-form `extra_context` field for library authors.
 - Python API for programmatic usage (`collect_package`, `render_package`).
 
-[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Syclaw/libcontext/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Syclaw/libcontext/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Syclaw/libcontext/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Syclaw/libcontext/compare/v0.1.0...v0.2.0
