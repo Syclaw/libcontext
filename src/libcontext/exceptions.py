@@ -52,6 +52,18 @@ class ConfigError(LibcontextError):
         super().__init__(detail)
 
 
+class EnvironmentSetupError(LibcontextError):
+    """Raised when a target Python environment cannot be resolved or queried.
+
+    Attributes:
+        python_path: The path that was supplied by the user.
+    """
+
+    def __init__(self, python_path: str, reason: str) -> None:
+        self.python_path = python_path
+        super().__init__(f"Cannot use environment '{python_path}': {reason}")
+
+
 class InspectionError(LibcontextError):
     """Raised when a source file cannot be parsed or read.
 

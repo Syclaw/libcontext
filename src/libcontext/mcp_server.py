@@ -59,6 +59,9 @@ mcp = FastMCP(
 
 _CACHE_SIZE = 32
 
+# Set by main() at startup; used by _collect_cached for cache namespacing.
+_active_env_tag: str | None = None
+
 
 @lru_cache(maxsize=_CACHE_SIZE)
 def _collect_cached(package_name: str, include_private: bool = False) -> PackageInfo:
@@ -67,6 +70,7 @@ def _collect_cached(package_name: str, include_private: bool = False) -> Package
         package_name,
         include_private=include_private,
         include_readme=False,
+        env_tag=_active_env_tag,
     )
 
 
@@ -262,7 +266,31 @@ def refresh_cache() -> str:
 
 
 def main() -> None:
-    """Run the libcontext MCP server (stdio transport)."""
+    """Run the libcontext MCP server (stdio transport).
+
+    Environment resolution (in priority order):
+
+    1. ``--python <path>`` CLI argument → use that environment.
+    2. ``LIBCONTEXT_PYTHON`` env var → use that environment.
+    3. Auto-detect ``.venv/`` or ``venv/`` in CWD → use the detected venv.
+    4. None of the above → use the current process's environment.
+    """
+    import os
+    import sys as _sys
+
+    python_env = None
+    args = _sys.argv[1:]
+    if args and args[0] == "--python" and len(args) >= 2:
+        python_env = args[1]
+    elif os.environ.get("LIBCONTEXT_PYTHON"):
+        python_env = os.environ["LIBCONTEXT_PYTHON"]
+
+    global _active_env_tag
+
+    from ._envsetup import setup_environment
+
+    _active_env_tag = setup_environment(python_env)
+
     mcp.run()
 
 

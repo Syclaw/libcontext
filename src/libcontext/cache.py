@@ -113,6 +113,7 @@ def load(
     package_name: str,
     version: str | None,
     package_path: Path,
+    env_tag: str | None = None,
 ) -> PackageInfo | None:
     """Load a cached PackageInfo if still valid.
 
@@ -120,11 +121,12 @@ def load(
         package_name: Package name.
         version: Current installed version (from metadata).
         package_path: Path to the package source (for mtime check).
+        env_tag: Environment identifier (from ``--python``).
 
     Returns:
         Cached PackageInfo if valid, None on miss or invalidation.
     """
-    cache_file = _get_cache_dir() / _cache_filename(package_name, version)
+    cache_file = _get_cache_dir() / _cache_filename(package_name, version, env_tag)
 
     if not cache_file.is_file():
         logger.debug("Cache miss for %r: file not found", package_name)
@@ -178,6 +180,7 @@ def save(
     package_info: PackageInfo,
     package_path: Path,
     source_stats: _SourceStats | None = None,
+    env_tag: str | None = None,
 ) -> None:
     """Save a PackageInfo to the disk cache.
 
@@ -185,6 +188,7 @@ def save(
         package_info: The collected package data.
         package_path: Path to the package source (for mtime computation).
         source_stats: Pre-computed stats. If None, stats are computed fresh.
+        env_tag: Environment identifier (from ``--python``).
     """
     if source_stats is None:
         source_stats = _compute_source_stats(package_path)
@@ -198,7 +202,9 @@ def save(
     envelope = _serialize_envelope(data)
 
     cache_dir = _get_cache_dir()
-    cache_file = cache_dir / _cache_filename(package_info.name, package_info.version)
+    cache_file = cache_dir / _cache_filename(
+        package_info.name, package_info.version, env_tag
+    )
 
     try:
         cache_file.write_text(
@@ -252,14 +258,25 @@ def clear_all() -> int:
     return count
 
 
-def _cache_filename(package_name: str, version: str | None) -> str:
+def _cache_filename(
+    package_name: str,
+    version: str | None,
+    env_tag: str | None = None,
+) -> str:
     """Build the cache filename for a package.
 
     Sanitises both components to prevent path traversal via crafted
     package names (e.g. ``../../etc/cron.d/evil``).
+
+    When *env_tag* is provided (from ``--python``), it is appended to
+    the filename so that packages from different environments get
+    separate cache entries.
     """
     from ._security import sanitize_filename
 
     safe_name = sanitize_filename(package_name)
     safe_version = sanitize_filename(version) if version else "unknown"
+    if env_tag:
+        safe_tag = sanitize_filename(env_tag)
+        return f"{safe_name}-{safe_version}-{safe_tag}.json"
     return f"{safe_name}-{safe_version}.json"

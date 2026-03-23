@@ -27,6 +27,7 @@ from .config import LibcontextConfig
 from .diff import diff_packages
 from .exceptions import (
     ConfigError,
+    EnvironmentSetupError,
     InspectionError,
     LibcontextError,
     PackageNotFoundError,
@@ -69,6 +70,7 @@ __all__ = [
     "ClassInfo",
     "ConfigError",
     "DiffResult",
+    "EnvironmentSetupError",
     "FunctionDiff",
     "FunctionInfo",
     "InspectionError",

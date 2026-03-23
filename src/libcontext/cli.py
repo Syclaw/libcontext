@@ -35,7 +35,12 @@ from . import cache as _cache
 from .collector import collect_package
 from .config import LibcontextConfig, read_config_from_pyproject
 from .diff import diff_packages
-from .exceptions import ConfigError, InspectionError, PackageNotFoundError
+from .exceptions import (
+    ConfigError,
+    EnvironmentSetupError,
+    InspectionError,
+    PackageNotFoundError,
+)
 from .models import PackageInfo, _deserialize_envelope, _serialize_envelope
 from .renderer import (
     inject_into_file,
@@ -166,6 +171,17 @@ def _write_stdout(text: str) -> None:
     help="Force fresh collection, bypass disk cache.",
 )
 @click.option(
+    "--python",
+    "python_env",
+    type=str,
+    default=None,
+    help=(
+        "Override environment for package discovery.  Accepts a venv "
+        "directory or Python interpreter path.  By default, libcontext "
+        "auto-detects .venv/ or venv/ in the current directory."
+    ),
+)
+@click.option(
     "-v",
     "--verbose",
     is_flag=True,
@@ -185,6 +201,7 @@ def inspect(
     max_readme_lines: int | None,
     config_path: Path | None,
     no_cache: bool,
+    python_env: str | None,
     quiet: bool,
     verbose: bool,
 ) -> None:
@@ -225,6 +242,15 @@ def inspect(
     # --overview and --search don't need README
     skip_readme = no_readme or overview or search_query is not None
 
+    # Resolve target environment (--python override, auto-detected venv, or current)
+    from ._envsetup import setup_environment
+
+    try:
+        _env_tag = setup_environment(python_env)
+    except EnvironmentSetupError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
     all_blocks: list[tuple[str, str]] = []
 
     for pkg_name in packages:
@@ -238,6 +264,7 @@ def inspect(
                 include_readme=not skip_readme,
                 config_override=config,
                 no_cache=no_cache,
+                env_tag=_env_tag,
             )
         except PackageNotFoundError as exc:
             click.echo(f"Error: {exc}", err=True)

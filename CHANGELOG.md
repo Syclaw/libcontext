@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-detect project venv**: libcontext now automatically detects `.venv/` or `venv/` in the current directory and uses it for package discovery. This fixes the core issue where `uv tool install libcontext` could not see packages from project environments.
+- **`--python` CLI option**: explicit override for targeting a specific Python interpreter or venv directory (e.g. `--python /path/to/other/venv`).
+- **`LIBCONTEXT_PYTHON` env var**: configure the MCP server's target environment via environment variable or `--python` argument.
+- **`EnvironmentSetupError` exception**: raised when a target environment cannot be resolved or queried.
+- **Cache namespacing by environment**: packages from different environments get separate cache entries, preventing cross-environment cache collisions.
+
 ## [0.3.0] - 2026-03-23
 
 ### Added

@@ -620,6 +620,7 @@ def collect_package(
     include_readme: bool = True,
     config_override: LibcontextConfig | None = None,
     no_cache: bool = False,
+    env_tag: str | None = None,
 ) -> PackageInfo:
     """Collect complete API information for a Python package.
 
@@ -632,6 +633,8 @@ def collect_package(
         include_readme: Attach the package README to the result.
         config_override: Explicit config; skips automatic discovery.
         no_cache: Skip the disk cache (force fresh AST collection).
+        env_tag: Environment identifier for cache namespacing (from
+            ``--python``).
 
     Returns:
         :class:`~libcontext.models.PackageInfo` with all collected data.
@@ -695,7 +698,7 @@ def collect_package(
     source_stats: _cache._SourceStats | None = None
 
     if use_cache:
-        cached = _cache.load(pkg_name, metadata.get("version"), pkg_path)
+        cached = _cache.load(pkg_name, metadata.get("version"), pkg_path, env_tag)
         if cached is not None:
             if include_readme:
                 cached.readme = _find_readme(pkg_name, pkg_path)
@@ -722,6 +725,6 @@ def collect_package(
 
     # --- Cache save ----------------------------------------------------
     if use_cache:
-        _cache.save(pkg_info, pkg_path, source_stats=source_stats)
+        _cache.save(pkg_info, pkg_path, source_stats=source_stats, env_tag=env_tag)
 
     return pkg_info
