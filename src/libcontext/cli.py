@@ -54,6 +54,7 @@ from .renderer import (
 
 
 @click.group()
+@click.version_option(package_name="libcontext")
 def main() -> None:
     """Generate LLM-optimised context from Python library APIs."""
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--version` flag**: `libctx --version` displays the installed version, read from package metadata.
+
 ## [0.4.0] - 2026-03-23
 
 ### Added
