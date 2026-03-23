@@ -397,6 +397,27 @@ def _find_readme(package_name: str, package_path: Path | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _is_safe_source_file(file_path: Path, root: Path) -> bool:
+    """Check that a source file is safe to read.
+
+    Rejects files that escape the package boundary via symlinks and
+    files larger than the configured limit (likely generated data, not API).
+    """
+    from ._security import check_file_size, is_within_boundary
+
+    if not is_within_boundary(file_path, root):
+        logger.warning(
+            "Skipped %s: resolves outside package boundary %s",
+            file_path,
+            root,
+        )
+        return False
+    if not check_file_size(file_path):
+        logger.warning("Skipped %s: exceeds source file size limit", file_path)
+        return False
+    return True
+
+
 def _should_skip_path(parts: tuple[str, ...], include_private: bool) -> bool:
     """Decide whether a file path should be skipped.
 
@@ -489,6 +510,8 @@ def _walk_package(
     file_map: dict[str, tuple[Path | None, Path | None, str]] = {}
 
     for py_file in sorted(package_path.rglob("*.py")):
+        if not _is_safe_source_file(py_file, package_path):
+            continue
         relative = py_file.relative_to(package_path)
         parts = relative.parts
         if _should_skip_path(parts, include_private=config.include_private):
@@ -498,6 +521,8 @@ def _walk_package(
 
     # Colocated .pyi files
     for pyi_file in sorted(package_path.rglob("*.pyi")):
+        if not _is_safe_source_file(pyi_file, package_path):
+            continue
         relative = pyi_file.relative_to(package_path)
         parts = relative.parts
         if _should_skip_path(parts, include_private=config.include_private):
@@ -509,6 +534,8 @@ def _walk_package(
     # Standalone stub .pyi files
     if stub_path is not None:
         for pyi_file in sorted(stub_path.rglob("*.pyi")):
+            if not _is_safe_source_file(pyi_file, stub_path):
+                continue
             relative = pyi_file.relative_to(stub_path)
             parts = relative.parts
             if _should_skip_path(parts, include_private=config.include_private):

@@ -527,3 +527,20 @@ class TestRenderDiff:
         assert "## Breaking Changes" in output
         assert "## Added" in output
         assert "## Modified" in output
+
+
+# ---------------------------------------------------------------------------
+# Different package names warning
+# ---------------------------------------------------------------------------
+
+
+def test_diff_different_package_names_logs_warning(caplog) -> None:
+    """Comparing packages with different names emits a warning."""
+    import logging
+
+    old = PackageInfo(name="pkg_a", modules=[])
+    new = PackageInfo(name="pkg_b", modules=[])
+    with caplog.at_level(logging.WARNING, logger="libcontext.diff"):
+        result = diff_packages(old, new)
+    assert any("different names" in r.message for r in caplog.records)
+    assert result.package_name == "pkg_b"

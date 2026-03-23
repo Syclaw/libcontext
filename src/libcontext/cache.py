@@ -73,11 +73,21 @@ class _SourceStats:
 
 
 def _compute_source_stats(package_path: Path) -> _SourceStats:
-    """Compute mtime and file count across all source files in a package."""
+    """Compute mtime and file count across all source files in a package.
+
+    Applies the same boundary and size guards as the collector to avoid
+    following symlinks that escape the package directory.
+    """
+    from ._security import check_file_size, is_within_boundary
+
     max_mtime = 0.0
     file_count = 0
     for pattern in ("*.py", "*.pyi"):
         for f in package_path.rglob(pattern):
+            if not is_within_boundary(f, package_path):
+                continue
+            if not check_file_size(f):
+                continue
             try:
                 mtime = f.stat().st_mtime
                 if mtime > max_mtime:
@@ -243,5 +253,13 @@ def clear_all() -> int:
 
 
 def _cache_filename(package_name: str, version: str | None) -> str:
-    """Build the cache filename for a package."""
-    return f"{package_name}-{version or 'unknown'}.json"
+    """Build the cache filename for a package.
+
+    Sanitises both components to prevent path traversal via crafted
+    package names (e.g. ``../../etc/cron.d/evil``).
+    """
+    from ._security import sanitize_filename
+
+    safe_name = sanitize_filename(package_name)
+    safe_version = sanitize_filename(version) if version else "unknown"
+    return f"{safe_name}-{safe_version}.json"

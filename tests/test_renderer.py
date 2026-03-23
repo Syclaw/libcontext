@@ -5,15 +5,21 @@ from __future__ import annotations
 import pytest
 
 from libcontext.models import (
+    ClassDiff,
     ClassInfo,
+    DiffResult,
+    FunctionDiff,
     FunctionInfo,
+    ModuleDiff,
     ModuleInfo,
     PackageInfo,
     ParameterInfo,
+    VariableDiff,
     VariableInfo,
 )
 from libcontext.renderer import (
     _format_docstring_match,
+    _format_signature,
     _group_overloads,
     _has_overload,
     _is_overload,
@@ -23,6 +29,7 @@ from libcontext.renderer import (
     _render_type_alias,
     _resolve_overload_docstring,
     inject_into_file,
+    render_diff,
     render_module,
     render_package,
     render_package_overview,
@@ -1186,3 +1193,240 @@ def test_structured_search_overloaded_function():
     assert len(funcs) == 1
     assert funcs[0]["name"] == "get"
     assert "overload_count" in funcs[0]
+
+
+def test_format_signature_positional_only_trailing_slash():
+    func = FunctionInfo(
+        name="f",
+        parameters=[
+            ParameterInfo(name="x", annotation="int", kind="POSITIONAL_ONLY"),
+            ParameterInfo(name="y", annotation="int", kind="POSITIONAL_ONLY"),
+        ],
+    )
+    sig = _format_signature(func)
+    assert "x: int, y: int, /" in sig
+
+
+def test_format_signature_keyword_only_separator():
+    func = FunctionInfo(
+        name="f",
+        parameters=[
+            ParameterInfo(name="a", kind="POSITIONAL_OR_KEYWORD"),
+            ParameterInfo(name="b", kind="KEYWORD_ONLY"),
+        ],
+    )
+    sig = _format_signature(func)
+    assert "a, *, b" in sig
+
+
+def test_format_signature_positional_only_then_regular():
+    func = FunctionInfo(
+        name="f",
+        parameters=[
+            ParameterInfo(name="x", kind="POSITIONAL_ONLY"),
+            ParameterInfo(name="y", kind="POSITIONAL_OR_KEYWORD"),
+        ],
+    )
+    sig = _format_signature(func)
+    assert "x, /, y" in sig
+
+
+def test_search_overloaded_method_in_class():
+    pkg = PackageInfo(
+        name="mylib",
+        modules=[
+            ModuleInfo(
+                name="mylib.core",
+                classes=[
+                    ClassInfo(
+                        name="Client",
+                        methods=[
+                            FunctionInfo(
+                                name="send",
+                                parameters=[
+                                    ParameterInfo(name="self"),
+                                    ParameterInfo(name="data", annotation="str"),
+                                ],
+                                return_annotation="str",
+                                decorators=["overload"],
+                            ),
+                            FunctionInfo(
+                                name="send",
+                                parameters=[
+                                    ParameterInfo(name="self"),
+                                    ParameterInfo(name="data", annotation="bytes"),
+                                ],
+                                return_annotation="bytes",
+                                decorators=["overload"],
+                            ),
+                            FunctionInfo(
+                                name="send",
+                                parameters=[
+                                    ParameterInfo(name="self"),
+                                    ParameterInfo(name="data"),
+                                ],
+                                docstring="Send data.",
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+    output = search_package(pkg, "send")
+    assert "(overloaded)" in output
+    assert "Client.send" in output
+
+
+def test_structured_search_overloaded_method():
+    pkg = PackageInfo(
+        name="mylib",
+        modules=[
+            ModuleInfo(
+                name="mylib.core",
+                classes=[
+                    ClassInfo(
+                        name="Client",
+                        methods=[
+                            FunctionInfo(
+                                name="send",
+                                parameters=[
+                                    ParameterInfo(name="self"),
+                                    ParameterInfo(name="data", annotation="str"),
+                                ],
+                                return_annotation="str",
+                                decorators=["overload"],
+                            ),
+                            FunctionInfo(
+                                name="send",
+                                parameters=[
+                                    ParameterInfo(name="self"),
+                                    ParameterInfo(name="data", annotation="bytes"),
+                                ],
+                                return_annotation="bytes",
+                                decorators=["overload"],
+                            ),
+                            FunctionInfo(
+                                name="send",
+                                parameters=[
+                                    ParameterInfo(name="self"),
+                                    ParameterInfo(name="data"),
+                                ],
+                                docstring="Send data.",
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+    results = search_package_structured(pkg, "send")
+    methods = [r for r in results if r["kind"] == "method"]
+    assert len(methods) == 1
+    assert methods[0]["name"] == "send"
+    assert "overload_count" in methods[0]
+
+
+def test_render_package_with_max_output_chars():
+    pkg = _make_simple_package()
+    output = render_package(pkg, max_output_chars=200)
+    assert len(output) <= 500
+    assert "truncated" in output.lower()
+
+
+def test_inject_legacy_marker_upgrade():
+    existing = (
+        "# Instructions\n\n"
+        "<!-- BEGIN LIBCONTEXT: pkg>name -->\n"
+        "OLD CONTENT\n"
+        "<!-- END LIBCONTEXT: pkg>name -->\n"
+    )
+    result = inject_into_file("NEW CONTENT", "pkg>name", existing=existing)
+    assert "NEW CONTENT" in result
+    assert "OLD CONTENT" not in result
+    assert "pkg>name" not in result or "pkg" in result
+
+
+def test_render_diff_breaking_class_changes():
+    result = DiffResult(
+        package_name="mypkg",
+        old_version="1.0",
+        new_version="2.0",
+        modified_modules=[
+            ModuleDiff(
+                module_name="mypkg.core",
+                modified_classes=[
+                    ClassDiff(
+                        name="Client",
+                        is_breaking=True,
+                        changes=["base class 'Base' removed"],
+                        removed_methods=["connect"],
+                        modified_methods=[
+                            FunctionDiff(
+                                name="send",
+                                is_breaking=True,
+                                changes=["parameter 'data' removed"],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+    output = render_diff(result)
+    assert "## Breaking Changes" in output
+    assert "Removed method" in output
+    assert "connect" in output
+    assert "base class 'Base' removed" in output or "Base" in output
+    assert "## Modified" in output
+
+
+def test_render_diff_added_methods_and_variables():
+    result = DiffResult(
+        package_name="mypkg",
+        modified_modules=[
+            ModuleDiff(
+                module_name="mypkg.core",
+                modified_classes=[
+                    ClassDiff(
+                        name="Client",
+                        added_methods=["new_method"],
+                        added_variables=["new_var"],
+                        removed_variables=["old_var"],
+                        modified_variables=[
+                            VariableDiff(
+                                name="count", changes=["type changed: int → str"]
+                            ),
+                        ],
+                    ),
+                ],
+                added_functions=["new_func"],
+                added_classes=["NewClass"],
+                modified_variables=[
+                    VariableDiff(name="VERSION", changes=["value changed"]),
+                ],
+            ),
+        ],
+    )
+    output = render_diff(result)
+    assert "## Added" in output
+    assert "new_method" in output
+    assert "new_func" in output
+    assert "NewClass" in output
+    assert "## Modified" in output
+    assert "added attribute `new_var`" in output
+    assert "removed attribute `old_var`" in output
+    assert "attribute `count`" in output
+    assert "VERSION" in output
+
+
+def test_search_result_cap():
+    funcs = [
+        FunctionInfo(name=f"match_{i}", docstring="A function.") for i in range(150)
+    ]
+    pkg = PackageInfo(
+        name="bigpkg",
+        modules=[ModuleInfo(name="bigpkg.core", functions=funcs)],
+    )
+    output = search_package(pkg, "match")
+    assert "omitted" in output.lower()

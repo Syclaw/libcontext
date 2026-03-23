@@ -294,3 +294,91 @@ def test_clear_all_empty(tmp_path, monkeypatch):
 def test_cache_filename():
     assert _cache_filename("requests", "2.31.0") == "requests-2.31.0.json"
     assert _cache_filename("mypkg", None) == "mypkg-unknown.json"
+
+
+# ---------------------------------------------------------------------------
+# _compute_source_stats boundary/size guards
+# ---------------------------------------------------------------------------
+
+
+def test_compute_source_stats_skips_symlink_escape(tmp_path):
+    """Symlinks escaping the package boundary are skipped."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "real.py").write_text("# ok")
+    target = tmp_path / "outside.py"
+    target.write_text("# outside")
+    link = pkg / "link.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return  # Skip if symlinks not supported
+    stats = _compute_source_stats(pkg)
+    assert stats.file_count == 1  # Only real.py counted
+
+
+def test_compute_source_stats_skips_oversized(tmp_path):
+    """Files exceeding size limit are skipped."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "small.py").write_text("# ok")
+    big = pkg / "big.py"
+    big.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+    stats = _compute_source_stats(pkg)
+    assert stats.file_count == 1
+
+
+# ---------------------------------------------------------------------------
+# save write failure
+# ---------------------------------------------------------------------------
+
+
+def test_save_write_failure(tmp_path, monkeypatch):
+    """OSError during cache write is handled gracefully."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    pkg = PackageInfo(
+        name="testpkg",
+        version="1.0.0",
+        modules=[ModuleInfo(name="testpkg.core", functions=[FunctionInfo(name="f")])],
+    )
+
+    with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+        # Should not raise
+        save(pkg, src_dir)
+
+
+# ---------------------------------------------------------------------------
+# _evict_oldest with OSError
+# ---------------------------------------------------------------------------
+
+
+def test_evict_oldest_oserror_during_stat(tmp_path):
+    """OSError during stat in eviction is skipped gracefully."""
+    from unittest.mock import patch
+
+    # Create more than limit
+    for i in range(_MAX_CACHE_ENTRIES + 2):
+        (tmp_path / f"pkg{i:03d}.json").write_text("{}")
+
+    # Patch to simulate OSError on stat for some files
+    original_stat = type(tmp_path / "dummy").stat
+
+    call_count = [0]
+
+    def flaky_stat(self):
+        call_count[0] += 1
+        if call_count[0] == 2:
+            raise OSError("bad disk")
+        return original_stat(self)
+
+    with patch.object(type(tmp_path / "dummy"), "stat", flaky_stat):
+        _evict_oldest(tmp_path)  # Should not crash

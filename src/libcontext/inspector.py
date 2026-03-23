@@ -440,11 +440,22 @@ def inspect_file(file_path: Path, module_name: str = "") -> ModuleInfo:
         :class:`~libcontext.exceptions.InspectionError` for single-file
         modules or logs and skips them for multi-file packages.
     """
+    from ._security import MAX_SOURCE_FILE_BYTES, check_file_size
+
     logger.debug(
         "Inspecting file %s (module=%s)",
         file_path,
         module_name or file_path.stem,
     )
+    if not check_file_size(file_path):
+        logger.warning(
+            "Skipped %s: exceeds %d byte size limit",
+            file_path,
+            MAX_SOURCE_FILE_BYTES,
+        )
+        if not module_name:
+            module_name = file_path.stem
+        return ModuleInfo(name=module_name, path=str(file_path))
     source = file_path.read_text(encoding="utf-8")
     if not module_name:
         module_name = file_path.stem

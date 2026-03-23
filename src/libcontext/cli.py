@@ -523,6 +523,18 @@ def _get_skill_content() -> str:
           `libctx inspect <package> --module <module_name> --no-cache -q`
         - Use `--type` with `--search` to reduce noise when you know what kind of
           symbol you need (e.g., `--type class` when looking for a class).
+
+        ## Safety limits
+
+        libcontext enforces built-in protections — no configuration needed:
+
+        - **Output truncation**: MCP tool responses are capped at ~120k characters
+          (~30k tokens). If output is truncated, a notice appears — use `--module`
+          to request smaller slices.
+        - **Search cap**: search results are limited to 100 matches. Use `--type`
+          or a more specific query to narrow results if the cap is hit.
+        - **No code execution**: all inspection is AST-based. Safe for any package,
+          including untrusted ones.
     """)
 
 
@@ -742,6 +754,23 @@ def clear() -> None:
 )
 def diff(old_file: Path, new_file: Path, output_format: str) -> None:
     """Compare two API snapshots and show what changed."""
+    from ._security import MAX_JSON_INPUT_BYTES
+
+    for label, path in (("old_file", old_file), ("new_file", new_file)):
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        if size > MAX_JSON_INPUT_BYTES:
+            click.echo(
+                f"Error: {label} exceeds the "
+                f"{MAX_JSON_INPUT_BYTES // (1024 * 1024)} MiB size limit "
+                f"({size:,} bytes).",
+                err=True,
+            )
+            sys.exit(1)
+
     try:
         old_raw = json.loads(old_file.read_text(encoding="utf-8"))
         new_raw = json.loads(new_file.read_text(encoding="utf-8"))

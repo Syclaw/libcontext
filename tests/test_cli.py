@@ -684,3 +684,398 @@ def test_overview_and_module_exclusive(sample_package: Path) -> None:
 
     assert result.exit_code == 1
     assert "mutually exclusive" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --type requires --search
+# ---------------------------------------------------------------------------
+
+
+def test_type_without_search_error(sample_package: Path) -> None:
+    """``--type`` without ``--search`` exits with error."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["inspect", str(sample_package), "--type", "class", "-q"]
+    )
+
+    assert result.exit_code == 1
+    assert "--type requires --search" in result.output
+
+
+# ---------------------------------------------------------------------------
+# JSON format output
+# ---------------------------------------------------------------------------
+
+
+def test_json_format_default(sample_package: Path) -> None:
+    """``--format json`` outputs valid JSON envelope."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["inspect", str(sample_package), "--format", "json", "-q"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+    assert data["data"]["name"] == "demopkg"
+
+
+def test_json_format_overview(sample_package: Path) -> None:
+    """``--overview --format json`` outputs full PackageInfo JSON."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["inspect", str(sample_package), "--overview", "--format", "json", "-q"],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+
+
+def test_json_format_module(sample_package: Path) -> None:
+    """``--module --format json`` outputs module JSON."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "inspect",
+            str(sample_package),
+            "--module",
+            "demopkg.core",
+            "--format",
+            "json",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+    assert data["data"]["name"] == "demopkg.core"
+
+
+def test_json_format_module_not_found(sample_package: Path) -> None:
+    """``--module --format json`` with bad module name exits with error."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "inspect",
+            str(sample_package),
+            "--module",
+            "demopkg.nope",
+            "--format",
+            "json",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_json_format_search(sample_package: Path) -> None:
+    """``--search --format json`` outputs structured search results."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "inspect",
+            str(sample_package),
+            "--search",
+            "hello",
+            "--format",
+            "json",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+    assert data["data"]["query"] == "hello"
+
+
+def test_json_format_to_file(sample_package: Path, tmp_path: Path) -> None:
+    """``--format json -o`` writes JSON to file."""
+    out_file = tmp_path / "out.json"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "inspect",
+            str(sample_package),
+            "--format",
+            "json",
+            "-o",
+            str(out_file),
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert out_file.exists()
+    data = json.loads(out_file.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
+
+
+def test_json_format_search_with_type(sample_package: Path) -> None:
+    """``--search --type --format json`` applies type filter."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "inspect",
+            str(sample_package),
+            "--search",
+            "hello",
+            "--type",
+            "function",
+            "--format",
+            "json",
+            "-q",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+
+
+# ---------------------------------------------------------------------------
+# cache subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_cache_clear(tmp_path: Path, monkeypatch) -> None:
+    """``libctx cache clear`` runs without error."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["cache", "clear"])
+
+    assert result.exit_code == 0
+    assert "Cleared" in result.output
+
+
+# ---------------------------------------------------------------------------
+# diff subcommand
+# ---------------------------------------------------------------------------
+
+
+def _make_json_snapshot(tmp_path: Path, name: str, version: str) -> Path:
+    """Create a minimal API snapshot JSON file."""
+    from libcontext.models import _serialize_envelope
+
+    data = _serialize_envelope(
+        {
+            "name": name,
+            "version": version,
+            "modules": [
+                {
+                    "name": f"{name}.core",
+                    "functions": [
+                        {
+                            "name": "hello",
+                            "return_annotation": "str",
+                            "parameters": [],
+                        }
+                    ],
+                    "classes": [],
+                    "variables": [],
+                }
+            ],
+        }
+    )
+    path = tmp_path / f"{name}-{version}.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def test_diff_markdown(tmp_path: Path) -> None:
+    """``libctx diff`` outputs Markdown by default."""
+    old = _make_json_snapshot(tmp_path, "mypkg", "1.0")
+    new = _make_json_snapshot(tmp_path, "mypkg", "2.0")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["diff", str(old), str(new)])
+
+    assert result.exit_code == 0
+
+
+def test_diff_json_format(tmp_path: Path) -> None:
+    """``libctx diff --format json`` outputs JSON."""
+    old = _make_json_snapshot(tmp_path, "mypkg", "1.0")
+    new = _make_json_snapshot(tmp_path, "mypkg", "2.0")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["diff", str(old), str(new), "--format", "json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+
+
+def test_diff_invalid_json(tmp_path: Path) -> None:
+    """``libctx diff`` with invalid JSON exits with error."""
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    good = _make_json_snapshot(tmp_path, "mypkg", "1.0")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["diff", str(bad), str(good)])
+
+    assert result.exit_code == 1
+    assert "invalid JSON" in result.output
+
+
+def test_diff_invalid_envelope(tmp_path: Path) -> None:
+    """``libctx diff`` with wrong schema version exits with error."""
+    bad = tmp_path / "bad_envelope.json"
+    bad.write_text(
+        json.dumps({"schema_version": 999, "data": {}}),
+        encoding="utf-8",
+    )
+    good = _make_json_snapshot(tmp_path, "mypkg", "1.0")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["diff", str(good), str(bad)])
+
+    assert result.exit_code == 1
+    assert "Unsupported schema version" in result.output
+
+
+def test_diff_with_changes(tmp_path: Path) -> None:
+    """``libctx diff`` detects API changes between snapshots."""
+    from libcontext.models import _serialize_envelope
+
+    old_data = _serialize_envelope(
+        {
+            "name": "mypkg",
+            "version": "1.0",
+            "modules": [
+                {
+                    "name": "mypkg.core",
+                    "functions": [
+                        {"name": "old_func", "parameters": []},
+                        {"name": "kept", "parameters": []},
+                    ],
+                    "classes": [],
+                    "variables": [],
+                }
+            ],
+        }
+    )
+    new_data = _serialize_envelope(
+        {
+            "name": "mypkg",
+            "version": "2.0",
+            "modules": [
+                {
+                    "name": "mypkg.core",
+                    "functions": [
+                        {"name": "kept", "parameters": []},
+                        {"name": "new_func", "parameters": []},
+                    ],
+                    "classes": [],
+                    "variables": [],
+                }
+            ],
+        }
+    )
+
+    old_file = tmp_path / "old.json"
+    new_file = tmp_path / "new.json"
+    old_file.write_text(json.dumps(old_data), encoding="utf-8")
+    new_file.write_text(json.dumps(new_data), encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["diff", str(old_file), str(new_file)])
+
+    assert result.exit_code == 0
+    assert "old_func" in result.output or "new_func" in result.output
+
+
+# ---------------------------------------------------------------------------
+# _write_stdout fallback
+# ---------------------------------------------------------------------------
+
+
+def test_write_stdout_no_buffer(tmp_path: Path) -> None:
+    """_write_stdout falls back to click.echo when no .buffer attribute."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Root."""', encoding="utf-8")
+
+    class FakeStdout:
+        def __init__(self):
+            self.data = ""
+
+        def write(self, s):
+            self.data += s
+
+        def flush(self):
+            pass
+
+    fake = FakeStdout()
+    runner = CliRunner()
+    with patch("sys.stdout", fake):
+        result = runner.invoke(main, ["inspect", str(pkg)])
+
+    assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# InspectionError during collect
+# ---------------------------------------------------------------------------
+
+
+def test_inspection_error_exits(tmp_path: Path) -> None:
+    """InspectionError during collect_package exits with error."""
+    from libcontext.exceptions import InspectionError
+
+    runner = CliRunner()
+    with patch(
+        "libcontext.cli.collect_package",
+        side_effect=InspectionError("/bad/file.py", "syntax error"),
+    ):
+        result = runner.invoke(main, ["inspect", "somepkg"])
+
+    assert result.exit_code == 1
+    assert "Error" in result.output
+
+
+def test_config_error_during_collect(tmp_path: Path) -> None:
+    """ConfigError during collect_package exits with error."""
+    from libcontext.exceptions import ConfigError
+
+    runner = CliRunner()
+    with patch(
+        "libcontext.cli.collect_package",
+        side_effect=ConfigError("bad config"),
+    ):
+        result = runner.invoke(main, ["inspect", "somepkg"])
+
+    assert result.exit_code == 1
+    assert "config" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Output file read OSError
+# ---------------------------------------------------------------------------
+
+
+def test_output_file_read_os_error(sample_package: Path, tmp_path: Path) -> None:
+    """OSError when reading existing output file exits with error."""
+    out_file = tmp_path / "out.md"
+    out_file.write_text("existing", encoding="utf-8")
+
+    runner = CliRunner()
+    with patch.object(Path, "read_text", side_effect=OSError("disk error")):
+        result = runner.invoke(
+            main, ["inspect", str(sample_package), "-o", str(out_file)]
+        )
+
+    assert result.exit_code == 1

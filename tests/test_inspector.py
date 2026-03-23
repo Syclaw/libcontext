@@ -528,3 +528,54 @@ def test_pep695_alias_in_class():
     cls = module.classes[0]
     alias = next(v for v in cls.class_variables if v.name == "Inner")
     assert alias.is_type_alias is True
+
+
+# ---------------------------------------------------------------------------
+# inspect_file with oversized file
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_file_oversized(tmp_path):
+    """Oversized files return an empty ModuleInfo."""
+    from libcontext.inspector import inspect_file
+
+    big = tmp_path / "big.py"
+    big.write_bytes(b"x = 1\n" * (2 * 1024 * 1024))
+    result = inspect_file(big, module_name="big")
+    assert result.name == "big"
+    assert result.functions == []
+    assert result.classes == []
+
+
+def test_inspect_file_oversized_default_name(tmp_path):
+    """Oversized file with no module_name uses file stem."""
+    from libcontext.inspector import inspect_file
+
+    big = tmp_path / "mymod.py"
+    big.write_bytes(b"x = 1\n" * (2 * 1024 * 1024))
+    result = inspect_file(big)
+    assert result.name == "mymod"
+
+
+# ---------------------------------------------------------------------------
+# Class-level ast.Assign variables (lines 273-276)
+# ---------------------------------------------------------------------------
+
+SAMPLE_CLASS_ASSIGN = '''
+class Config:
+    """Configuration."""
+    DEBUG = True
+    VERSION = "1.0"
+'''
+
+
+def test_class_level_assign_variables():
+    """Plain Assign in class body produces VariableInfo."""
+    module = inspect_source(SAMPLE_CLASS_ASSIGN, module_name="test_mod")
+    cls = module.classes[0]
+    var_names = [v.name for v in cls.class_variables]
+    assert "DEBUG" in var_names
+    assert "VERSION" in var_names
+    debug_var = next(v for v in cls.class_variables if v.name == "DEBUG")
+    assert debug_var.value == "True"
+    assert debug_var.annotation is None

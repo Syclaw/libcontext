@@ -372,3 +372,34 @@ class TestRefreshCache:
     def test_clears_all(self):
         result = mcp_server.refresh_cache()
         assert "Cache cleared" in result
+
+
+# ---------------------------------------------------------------------------
+# search_api invalid kind ValueError
+# ---------------------------------------------------------------------------
+
+
+class TestSearchApiValueError:
+    def test_invalid_kind_returns_error(self):
+        with _patch_collect():
+            result = mcp_server.search_api("fakepkg", "Client", kind="method")
+        assert "Error:" in result
+
+
+# ---------------------------------------------------------------------------
+# diff_api size limit
+# ---------------------------------------------------------------------------
+
+
+class TestDiffApiSizeLimit:
+    def test_oversized_old_json(self):
+        huge = "x" * (50 * 1024 * 1024 + 1)
+        result = mcp_server.diff_api(huge, "{}")
+        assert "Error:" in result
+        assert "size limit" in result
+
+    def test_oversized_new_json(self):
+        huge = "x" * (50 * 1024 * 1024 + 1)
+        result = mcp_server.diff_api("{}", huge)
+        assert "Error:" in result
+        assert "size limit" in result

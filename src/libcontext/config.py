@@ -72,6 +72,10 @@ class LibcontextConfig:
                 "max_readme_lines must be an integer, "
                 f"got {type(max_readme_lines).__name__}"
             )
+        if max_readme_lines < 0:
+            raise ConfigError(
+                f"max_readme_lines must be non-negative, got {max_readme_lines}"
+            )
 
         return cls(
             include_modules=include_modules,

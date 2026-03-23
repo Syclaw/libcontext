@@ -14,6 +14,8 @@ from libcontext.collector import (
     _get_installed_package_names,
     _get_package_metadata,
     _is_compiled_extension,
+    _is_safe_source_file,
+    _merge_classes,
     _merge_module,
     _module_name_from_path,
     _should_skip_path,
@@ -25,6 +27,7 @@ from libcontext.collector import (
 from libcontext.config import LibcontextConfig
 from libcontext.exceptions import InspectionError, PackageNotFoundError
 from libcontext.models import (
+    ClassInfo,
     FunctionInfo,
     ModuleInfo,
     VariableInfo,
@@ -194,8 +197,6 @@ def test_find_package_path_spec_none() -> None:
 
 def test_find_package_path_with_submodule_search_locations() -> None:
     """Spec with no origin but submodule_search_locations returns first."""
-    from unittest.mock import MagicMock
-
     spec = MagicMock()
     spec.origin = None
     spec.submodule_search_locations = ["/fake/path"]
@@ -207,8 +208,6 @@ def test_find_package_path_with_submodule_search_locations() -> None:
 
 def test_find_package_path_no_origin_no_locations() -> None:
     """Spec with no origin and empty submodule_search_locations returns None."""
-    from unittest.mock import MagicMock
-
     spec = MagicMock()
     spec.origin = None
     spec.submodule_search_locations = []
@@ -219,8 +218,6 @@ def test_find_package_path_no_origin_no_locations() -> None:
 
 def test_find_package_path_frozen_origin() -> None:
     """Frozen module with no submodule_search returns None."""
-    from unittest.mock import MagicMock
-
     spec = MagicMock()
     spec.origin = "frozen"
     spec.submodule_search_locations = None
@@ -231,8 +228,6 @@ def test_find_package_path_frozen_origin() -> None:
 
 def test_find_package_path_single_file() -> None:
     """Single-file module returns the .py file path."""
-    from unittest.mock import MagicMock
-
     spec = MagicMock()
     spec.origin = "/some/path/module.py"
     spec.submodule_search_locations = None
@@ -288,11 +283,9 @@ def test_find_readme_rst(tmp_path: Path) -> None:
 
 
 def test_find_readme_no_path() -> None:
-    """No package path → falls back to metadata only."""
-    # Won't crash when package_path is None
+    """No package path and no installed metadata → returns None."""
     result = _find_readme("this_pkg_does_not_exist_xyz", None)
-    # May return None if pkg is not installed
-    assert result is None or isinstance(result, str)
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -972,3 +965,121 @@ def test_walk_package_pyi_syntax_error(tmp_path: Path):
 
     core = next(m for m in modules if m.name == "mypkg.core")
     assert core.stub_source == ""
+
+
+def test_is_compiled_extension_nonexistent(tmp_path: Path):
+    """Test _is_compiled_extension returns False for nonexistent path."""
+    fake = tmp_path / "nonexistent"
+    assert _is_compiled_extension(fake) is False
+
+
+def test_merge_classes_basic():
+    """Test _merge_classes merges docstrings from py and signatures from pyi."""
+    py_classes = [
+        ClassInfo(
+            name="Foo",
+            docstring="Py doc.",
+            methods=[FunctionInfo(name="m", docstring="Method doc.")],
+        ),
+    ]
+    pyi_classes = [
+        ClassInfo(
+            name="Foo",
+            methods=[FunctionInfo(name="m", return_annotation="int")],
+        ),
+    ]
+    merged = _merge_classes(py_classes, pyi_classes)
+    assert len(merged) == 1
+    assert merged[0].docstring == "Py doc."
+    assert merged[0].methods[0].return_annotation == "int"
+    assert merged[0].methods[0].docstring == "Method doc."
+
+
+def test_merge_classes_pyi_only_class():
+    """Test that a class only in pyi is included in merged result."""
+    py_classes: list[ClassInfo] = []
+    pyi_classes = [
+        ClassInfo(name="OnlyPyi", docstring="Pyi only.", methods=[]),
+    ]
+    merged = _merge_classes(py_classes, pyi_classes)
+    assert len(merged) == 1
+    assert merged[0].name == "OnlyPyi"
+
+
+def test_merge_classes_py_only_class():
+    """Test that a class only in py is included in merged result."""
+    py_classes = [
+        ClassInfo(name="OnlyPy", docstring="Py only.", methods=[]),
+    ]
+    pyi_classes: list[ClassInfo] = []
+    merged = _merge_classes(py_classes, pyi_classes)
+    assert len(merged) == 1
+    assert merged[0].name == "OnlyPy"
+    assert merged[0].docstring == "Py only."
+
+
+def test_is_safe_source_file_symlink_escape(tmp_path: Path):
+    """Test _is_safe_source_file rejects symlinks escaping the package boundary."""
+    target = tmp_path.parent / "escape_target.py"
+    target.write_text("x = 1", encoding="utf-8")
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    link = pkg / "link.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return  # Skip if symlinks not supported
+    assert _is_safe_source_file(link, pkg) is False
+
+
+def test_is_safe_source_file_oversized(tmp_path: Path):
+    """Test _is_safe_source_file rejects files exceeding size limit."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    big = pkg / "big.py"
+    big.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+    assert _is_safe_source_file(big, pkg) is False
+
+
+def test_is_safe_source_file_normal(tmp_path: Path):
+    """Test _is_safe_source_file accepts a normal file within boundary."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    normal = pkg / "normal.py"
+    normal.write_text("x = 1", encoding="utf-8")
+    assert _is_safe_source_file(normal, pkg) is True
+
+
+def test_walk_package_single_file_py_fails_pyi_used(tmp_path: Path):
+    """Test single-file module falls back to .pyi when .py has syntax error."""
+    py_file = tmp_path / "mod.py"
+    pyi_file = tmp_path / "mod.pyi"
+    py_file.write_text("def f( -> broken\n", encoding="utf-8")
+    pyi_file.write_text("def f() -> int: ...\n", encoding="utf-8")
+    config = LibcontextConfig()
+    modules = _walk_package(py_file, "mod", config)
+    assert len(modules) == 1
+    assert modules[0].stub_source == "colocated"
+    assert modules[0].functions[0].return_annotation == "int"
+
+
+def test_walk_package_single_file_py_fails_no_pyi_raises(tmp_path: Path):
+    """Test single-file module with syntax error and no .pyi raises InspectionError."""
+    py_file = tmp_path / "mod.py"
+    py_file.write_text("def f( -> broken\n", encoding="utf-8")
+    config = LibcontextConfig()
+    with pytest.raises(InspectionError):
+        _walk_package(py_file, "mod", config)
+
+
+def test_walk_package_single_file_pyi_fails_py_used(tmp_path: Path):
+    """Test single-file module uses .py when .pyi has syntax error."""
+    py_file = tmp_path / "mod.py"
+    pyi_file = tmp_path / "mod.pyi"
+    py_file.write_text('def f():\n    """Doc."""\n', encoding="utf-8")
+    pyi_file.write_text("def f( -> broken\n", encoding="utf-8")
+    config = LibcontextConfig()
+    modules = _walk_package(py_file, "mod", config)
+    assert len(modules) == 1
+    assert modules[0].stub_source == ""
+    assert modules[0].functions[0].docstring == "Doc."

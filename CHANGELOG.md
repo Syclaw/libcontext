@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Security module** (`_security.py`): centralised input sanitisation, path boundary validation, output size guards, and search result caps. All security invariants enforced in one auditable location.
 - **Stub file support**: `.pyi` stub files are discovered (colocated and standalone stub packages) and merged with `.py` sources — signatures from stubs, docstrings from sources.
 - **Overload grouping**: `@typing.overload`-decorated functions are grouped into a single entry showing all signatures in one code block.
 - **Type alias rendering**: PEP 613 (`TypeAlias`) and PEP 695 (`type X = T`) type aliases are detected via AST analysis and rendered in dedicated "Type Aliases" sections.
@@ -16,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API diff**: `libctx diff old.json new.json` compares two API snapshots and reports added, removed, and modified symbols with breaking change detection; `render_diff()` Markdown output; `--format json` support.
 - **Search enhancements**: `--type` filter (`class`, `function`, `variable`, `alias`); docstring search with preview annotations.
 - **Persistent disk cache**: Caches collected `PackageInfo` as JSON on disk; invalidation by `(version, max_mtime, file_count)`; LRU eviction (max 50 entries); `--no-cache` flag; `libctx cache clear` subcommand.
+
+### Security
+
+- **Path traversal prevention**: cache filenames are sanitised via regex allowlist — crafted package names like `../../etc/passwd` can no longer escape the cache directory.
+- **Symlink boundary enforcement**: all `rglob()` file walks (collector and cache stats) now verify that resolved paths remain within the package root, blocking symlink-based file read attacks.
+- **File size guard**: source files exceeding 10 MiB are skipped during both collection and inspection, preventing memory exhaustion from generated or malicious files.
+- **HTML marker escaping**: package names are escaped before insertion into `<!-- BEGIN/END LIBCONTEXT -->` markers, preventing comment injection and downstream prompt injection.
+- **Output truncation**: all MCP tool responses are capped at 120k characters (~30k tokens) with an explicit truncation notice, preventing context window saturation.
+- **Search result cap**: `search_package()` and `search_package_structured()` return at most 100 results by default, with a configurable `max_results` parameter.
+- **JSON input size limit**: the `diff` command (CLI and MCP) rejects inputs exceeding 50 MiB before deserialisation, preventing JSON-based denial of service.
+- **Config bounds validation**: `max_readme_lines` now rejects negative values.
+- **Legacy marker backward compatibility**: `inject_into_file()` detects and upgrades unescaped markers written by previous versions, preventing duplicate blocks.
 
 ### Changed
 

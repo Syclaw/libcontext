@@ -325,3 +325,14 @@ def test_find_config_logs_debug_when_not_found(tmp_path: Path, caplog) -> None:
         find_config_for_package(pkg_dir)
 
     assert any("No [tool.libcontext] config" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Negative max_readme_lines
+# ---------------------------------------------------------------------------
+
+
+def test_from_dict_negative_max_readme_lines() -> None:
+    """Negative max_readme_lines raises ConfigError."""
+    with pytest.raises(ConfigError, match="non-negative"):
+        LibcontextConfig.from_dict({"max_readme_lines": -1})

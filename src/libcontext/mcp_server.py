@@ -28,6 +28,7 @@ from functools import lru_cache
 from mcp.server.fastmcp import FastMCP
 
 from . import cache as _cache
+from ._security import truncate_output
 from .collector import collect_package
 from .diff import diff_packages
 from .exceptions import PackageNotFoundError
@@ -95,7 +96,7 @@ def get_package_overview(package_name: str) -> str:
     except PackageNotFoundError as exc:
         return f"Error: {exc}"
 
-    return render_package_overview(pkg)
+    return truncate_output(render_package_overview(pkg))
 
 
 @mcp.tool()
@@ -118,7 +119,7 @@ def get_module_api(package_name: str, module_name: str) -> str:
 
     for mod in pkg.non_empty_modules:
         if mod.name == module_name:
-            return render_module(mod)
+            return truncate_output(render_module(mod))
 
     available = [m.name for m in pkg.non_empty_modules]
     return (
@@ -157,8 +158,8 @@ def search_api(
             results = search_package_structured(pkg, query, kind=kind)
             data = {"query": query, "package": package_name, "results": results}
             envelope = _serialize_envelope(data)
-            return json.dumps(envelope, indent=2)
-        return search_package(pkg, query, kind=kind)
+            return truncate_output(json.dumps(envelope, indent=2))
+        return truncate_output(search_package(pkg, query, kind=kind))
     except ValueError as exc:
         return f"Error: {exc}"
 
@@ -187,7 +188,7 @@ def get_api_json(
         for mod in pkg.non_empty_modules:
             if mod.name == module_name:
                 envelope = _serialize_envelope(dataclasses.asdict(mod))
-                return json.dumps(envelope, indent=2)
+                return truncate_output(json.dumps(envelope, indent=2))
         available = [m.name for m in pkg.non_empty_modules]
         return (
             f"Module '{module_name}' not found in {package_name}.\n"
@@ -195,7 +196,7 @@ def get_api_json(
         )
 
     envelope = _serialize_envelope(dataclasses.asdict(pkg))
-    return json.dumps(envelope, indent=2)
+    return truncate_output(json.dumps(envelope, indent=2))
 
 
 @mcp.tool()
@@ -210,6 +211,16 @@ def diff_api(old_json: str, new_json: str, output_format: str = "markdown") -> s
         new_json: JSON string of the new API snapshot.
         output_format: Output format — ``markdown`` or ``json``.
     """
+    from ._security import MAX_JSON_INPUT_BYTES
+
+    for label, payload in (("old_json", old_json), ("new_json", new_json)):
+        if len(payload) > MAX_JSON_INPUT_BYTES:
+            limit_mib = MAX_JSON_INPUT_BYTES // (1024 * 1024)
+            return (
+                f"Error: {label} exceeds the {limit_mib} MiB "
+                f"size limit ({len(payload):,} bytes)."
+            )
+
     try:
         old_raw = json.loads(old_json)
         new_raw = json.loads(new_json)
@@ -228,8 +239,8 @@ def diff_api(old_json: str, new_json: str, output_format: str = "markdown") -> s
 
     if output_format == "json":
         envelope = _serialize_envelope(dataclasses.asdict(result))
-        return json.dumps(envelope, indent=2)
-    return render_diff(result)
+        return truncate_output(json.dumps(envelope, indent=2))
+    return truncate_output(render_diff(result))
 
 
 @mcp.tool()

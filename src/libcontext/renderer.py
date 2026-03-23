@@ -564,6 +564,7 @@ def search_package(
     query: str,
     *,
     kind: str | None = None,
+    max_results: int = 0,
 ) -> str:
     """Search for classes, functions, or methods matching a query.
 
@@ -576,6 +577,8 @@ def search_package(
         kind: Filter by entity type. Accepted values:
             ``"class"``, ``"function"``, ``"variable"``, ``"alias"``,
             or ``None`` (all types).
+        max_results: Cap the number of results returned.  ``0`` uses the
+            default from ``_security.DEFAULT_MAX_SEARCH_RESULTS``.
 
     Returns:
         Markdown-formatted search results, or a "no matches" message.
@@ -694,6 +697,18 @@ def search_package(
     if not results:
         return f"No matches for '{query}' in {package.name}."
 
+    from ._security import DEFAULT_MAX_SEARCH_RESULTS
+
+    cap = max_results if max_results > 0 else DEFAULT_MAX_SEARCH_RESULTS
+    if len(results) > cap:
+        truncated = results[:cap]
+        omitted = len(results) - cap
+        truncated.append(
+            f"\n*… {omitted} more results omitted. "
+            f"Narrow your query or use `--kind` to filter.*"
+        )
+        return "\n".join(truncated)
+
     return "\n".join(results)
 
 
@@ -702,6 +717,7 @@ def search_package_structured(
     query: str,
     *,
     kind: str | None = None,
+    max_results: int = 0,
 ) -> list[dict[str, str]]:
     """Search and return structured results for JSON output.
 
@@ -713,6 +729,7 @@ def search_package_structured(
         package: The collected package information.
         query: Search term (case-insensitive substring match).
         kind: Filter by entity type (same values as ``search_package``).
+        max_results: Cap the number of results.  ``0`` uses the default.
 
     Returns:
         List of result dicts with keys: kind, module, name, signature,
@@ -877,6 +894,12 @@ def search_package_structured(
                         }
                     )
 
+    from ._security import DEFAULT_MAX_SEARCH_RESULTS
+
+    cap = max_results if max_results > 0 else DEFAULT_MAX_SEARCH_RESULTS
+    if len(results) > cap:
+        return results[:cap]
+
     return results
 
 
@@ -886,6 +909,7 @@ def render_package(
     include_readme: bool = True,
     max_readme_lines: int = 100,
     extra_context: str | None = None,
+    max_output_chars: int = 0,
 ) -> str:
     """Render a :class:`PackageInfo` as Markdown optimised for LLM context.
 
@@ -895,6 +919,8 @@ def render_package(
         max_readme_lines: Truncate the README after this many lines.
         extra_context: Additional free-form context to append (e.g. from
             ``[tool.libcontext] extra_context``).
+        max_output_chars: Truncate output beyond this many characters.
+            ``0`` means unlimited (caller is responsible for size management).
 
     Returns:
         A complete Markdown string ready to be written to a file or stdout.
@@ -941,7 +967,14 @@ def render_package(
             lines.append("---")
             lines.append("")
 
-    return "\n".join(lines)
+    output = "\n".join(lines)
+
+    if max_output_chars > 0:
+        from ._security import truncate_output
+
+        output = truncate_output(output, limit=max_output_chars)
+
+    return output
 
 
 def inject_into_file(
@@ -963,15 +996,33 @@ def inject_into_file(
     Returns:
         The updated file contents.
     """
-    begin = BEGIN_MARKER.format(name=package_name)
-    end = END_MARKER.format(name=package_name)
+    from ._security import escape_marker_name
+
+    safe_name = escape_marker_name(package_name)
+    begin = BEGIN_MARKER.format(name=safe_name)
+    end = END_MARKER.format(name=safe_name)
     block = f"{begin}\n{content}\n{end}"
 
     if existing is None:
         return block
 
+    # Search for escaped markers first, then fall back to legacy unescaped
+    # markers for backward compatibility with files written before escaping
+    # was introduced.
     begin_idx = existing.find(begin)
     end_idx = existing.find(end)
+
+    if begin_idx == -1 or end_idx == -1 or begin_idx >= end_idx:
+        legacy_begin = BEGIN_MARKER.format(name=package_name)
+        legacy_end = END_MARKER.format(name=package_name)
+        if legacy_begin != begin:
+            lb_idx = existing.find(legacy_begin)
+            le_idx = existing.find(legacy_end)
+            if lb_idx != -1 and le_idx != -1 and lb_idx < le_idx:
+                # Replace legacy block with new escaped markers
+                before = existing[:lb_idx]
+                after = existing[le_idx + len(legacy_end) :]
+                return f"{before}{block}{after}"
 
     if begin_idx != -1 and end_idx != -1 and begin_idx < end_idx:
         # Well-formed existing section — replace it

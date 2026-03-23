@@ -19,10 +19,10 @@ This document lists all dependencies used by **libcontext** and their respective
 
 | Package | Version | License | Description |
 |---------|---------|---------|-------------|
-| [pytest](https://pypi.org/project/pytest/) | >=7.0 | MIT | Testing framework. |
-| [pytest-cov](https://pypi.org/project/pytest-cov/) | >=4.0 | MIT | Coverage plugin for pytest. |
-| [ruff](https://pypi.org/project/ruff/) | >=0.4.0 | MIT | Fast Python linter and formatter (replaces flake8, isort, black, pyupgrade). |
-| [mypy](https://pypi.org/project/mypy/) | >=1.10 | MIT | Static type checker for Python. |
+| [pytest](https://pypi.org/project/pytest/) | >=8.4.2 | MIT | Testing framework. |
+| [pytest-cov](https://pypi.org/project/pytest-cov/) | >=7.0.0 | MIT | Coverage plugin for pytest. |
+| [ruff](https://pypi.org/project/ruff/) | >=0.15.1 | MIT | Fast Python linter and formatter (replaces flake8, isort, black, pyupgrade). |
+| [mypy](https://pypi.org/project/mypy/) | >=1.19.1 | MIT | Static type checker for Python. |
 
 ## Build Dependencies
 
@@ -35,16 +35,22 @@ This document lists all dependencies used by **libcontext** and their respective
 The following standard library modules are used and require **no additional installation**:
 
 - `ast` — Abstract Syntax Trees (core of the inspection engine)
+- `contextlib` — Context managers (cache file handling)
+- `copy` — Deep copy of data structures (stub merging)
+- `dataclasses` — Data model definitions
+- `datetime` — Timestamp handling (cache metadata)
+- `difflib` — Fuzzy matching (similar package name suggestions)
+- `functools` — LRU cache (MCP server in-memory caching)
 - `importlib.metadata` — Package metadata access
 - `importlib.util` — Package location discovery
-- `dataclasses` — Data model definitions
-- `pathlib` — Filesystem path handling
+- `json` — JSON serialization (cache, MCP config, JSON output)
 - `logging` — Diagnostic logging
+- `os` — OS-level operations (cache directory, file stats)
+- `pathlib` — Filesystem path handling
 - `sys` — System-specific parameters
-- `io` — I/O handling (UTF-8 stdout wrapper)
-- `json` — JSON reading/writing (MCP config merge)
 - `textwrap` — Text formatting (skill content generation)
 - `tomllib` — TOML parsing (Python 3.11+, replaces `tomli`)
+- `typing` — Type annotations (`Any`)
 
 ## License Compatibility
 

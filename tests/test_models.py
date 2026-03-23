@@ -8,11 +8,16 @@ import pytest
 
 from libcontext.models import (
     _SCHEMA_VERSION,
+    ClassDiff,
     ClassInfo,
+    DiffResult,
+    FunctionDiff,
     FunctionInfo,
+    ModuleDiff,
     ModuleInfo,
     PackageInfo,
     ParameterInfo,
+    VariableDiff,
     VariableInfo,
     _deserialize_envelope,
     _serialize_envelope,
@@ -214,3 +219,118 @@ class TestDeserializeEnvelope:
         raw = {"data": {}}
         with pytest.raises(ValueError, match="Unsupported schema version"):
             _deserialize_envelope(raw)
+
+
+# ---------------------------------------------------------------------------
+# Diff model from_dict roundtrips
+# ---------------------------------------------------------------------------
+
+
+class TestVariableDiffRoundtrip:
+    def test_full(self) -> None:
+        vd = VariableDiff(name="X", is_breaking=True, changes=["type changed"])
+        assert VariableDiff.from_dict(dataclasses.asdict(vd)) == vd
+
+    def test_minimal(self) -> None:
+        vd = VariableDiff(name="Y")
+        assert VariableDiff.from_dict(dataclasses.asdict(vd)) == vd
+
+
+class TestFunctionDiffRoundtrip:
+    def test_full(self) -> None:
+        fd = FunctionDiff(name="f", is_breaking=True, changes=["param removed"])
+        assert FunctionDiff.from_dict(dataclasses.asdict(fd)) == fd
+
+    def test_minimal(self) -> None:
+        fd = FunctionDiff(name="g")
+        assert FunctionDiff.from_dict(dataclasses.asdict(fd)) == fd
+
+
+class TestClassDiffRoundtrip:
+    def test_full(self) -> None:
+        cd = ClassDiff(
+            name="C",
+            is_breaking=True,
+            changes=["base removed"],
+            added_methods=["new_m"],
+            removed_methods=["old_m"],
+            modified_methods=[FunctionDiff(name="m", changes=["return changed"])],
+            added_variables=["new_v"],
+            removed_variables=["old_v"],
+            modified_variables=[VariableDiff(name="v", changes=["type changed"])],
+        )
+        assert ClassDiff.from_dict(dataclasses.asdict(cd)) == cd
+
+
+class TestModuleDiffRoundtrip:
+    def test_full(self) -> None:
+        md = ModuleDiff(
+            module_name="pkg.core",
+            added_functions=["new_f"],
+            removed_functions=["old_f"],
+            modified_functions=[FunctionDiff(name="f")],
+            added_classes=["NewC"],
+            removed_classes=["OldC"],
+            modified_classes=[ClassDiff(name="C")],
+            added_variables=["new_v"],
+            removed_variables=["old_v"],
+            modified_variables=[VariableDiff(name="v")],
+        )
+        assert ModuleDiff.from_dict(dataclasses.asdict(md)) == md
+
+
+class TestDiffResultRoundtrip:
+    def test_full(self) -> None:
+        dr = DiffResult(
+            package_name="mypkg",
+            old_version="1.0",
+            new_version="2.0",
+            added_modules=["new_mod"],
+            removed_modules=["old_mod"],
+            modified_modules=[ModuleDiff(module_name="mypkg.core")],
+        )
+        assert DiffResult.from_dict(dataclasses.asdict(dr)) == dr
+
+
+# ---------------------------------------------------------------------------
+# has_breaking_changes with modified functions/classes
+# ---------------------------------------------------------------------------
+
+
+class TestHasBreakingChanges:
+    def test_breaking_via_modified_function(self) -> None:
+        dr = DiffResult(
+            package_name="mypkg",
+            modified_modules=[
+                ModuleDiff(
+                    module_name="mypkg.core",
+                    modified_functions=[FunctionDiff(name="f", is_breaking=True)],
+                ),
+            ],
+        )
+        assert dr.has_breaking_changes is True
+
+    def test_breaking_via_modified_class(self) -> None:
+        dr = DiffResult(
+            package_name="mypkg",
+            modified_modules=[
+                ModuleDiff(
+                    module_name="mypkg.core",
+                    modified_classes=[ClassDiff(name="C", is_breaking=True)],
+                ),
+            ],
+        )
+        assert dr.has_breaking_changes is True
+
+    def test_not_breaking_non_breaking_modifications(self) -> None:
+        dr = DiffResult(
+            package_name="mypkg",
+            modified_modules=[
+                ModuleDiff(
+                    module_name="mypkg.core",
+                    modified_functions=[FunctionDiff(name="f", is_breaking=False)],
+                    modified_classes=[ClassDiff(name="C", is_breaking=False)],
+                ),
+            ],
+        )
+        assert dr.has_breaking_changes is False
