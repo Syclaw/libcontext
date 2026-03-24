@@ -676,6 +676,53 @@ def test_suggest_similar_packages_uses_top_level_names() -> None:
     assert "PIL" in suggestions
 
 
+_PKGS_DISTS_PATH = "libcontext.collector.importlib.metadata.packages_distributions"
+
+
+def test_get_installed_package_names_handles_import_error() -> None:
+    """packages_distributions() raising ImportError is caught gracefully."""
+    dists = [
+        _make_mock_dist("requests"),
+    ]
+    with (
+        patch(_PKGS_DISTS_PATH, side_effect=ImportError("cannot import name '__version__' from '_csv'")),
+        patch(_DISTS_PATH, return_value=dists),
+    ):
+        names = _get_installed_package_names()
+
+    # Should still collect names from distributions() fallback
+    assert "requests" in names
+
+
+def test_get_installed_package_names_handles_generic_exception() -> None:
+    """packages_distributions() raising any Exception is caught gracefully."""
+    dists = [
+        _make_mock_dist("flask"),
+    ]
+    with (
+        patch(_PKGS_DISTS_PATH, side_effect=RuntimeError("broken metadata")),
+        patch(_DISTS_PATH, return_value=dists),
+    ):
+        names = _get_installed_package_names()
+
+    assert "flask" in names
+
+
+def test_suggest_similar_packages_resilient_to_import_error() -> None:
+    """suggest_similar_packages works even if packages_distributions() fails."""
+    dists = [
+        _make_mock_dist("requests"),
+        _make_mock_dist("flask"),
+    ]
+    with (
+        patch(_PKGS_DISTS_PATH, side_effect=ImportError("csv import broken")),
+        patch(_DISTS_PATH, return_value=dists),
+    ):
+        suggestions = suggest_similar_packages("reqeusts")
+
+    assert "requests" in suggestions
+
+
 def test_collect_package_error_includes_suggestions() -> None:
     """PackageNotFoundError from collect_package includes suggestions."""
     dists = [
