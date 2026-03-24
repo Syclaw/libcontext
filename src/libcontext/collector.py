@@ -58,8 +58,7 @@ def _get_installed_package_names() -> list[str]:
             # distributions()-based collection below which is more
             # resilient.
             logger.debug(
-                "packages_distributions() failed; falling back to "
-                "distributions() only",
+                "packages_distributions() failed; falling back to distributions() only",
                 exc_info=True,
             )
 
