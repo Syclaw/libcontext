@@ -10,7 +10,7 @@
 
 > Context-efficient API references for LLM toolchains — structured, on-demand, not always-on.
 
-**libcontext** inspects any installed Python package via static AST analysis (no code execution) and generates compact Markdown API references. It integrates with Claude Code (via a `/lib` skill) and VS Code Copilot (via an MCP server) to provide **progressive disclosure** — only loading API context when you actually need it, avoiding context window pollution.
+**libcontext** inspects any installed Python package via static AST analysis (no code execution) and generates compact Markdown API references. It integrates with Claude Code, GitHub Copilot (via a `/lib` skill), and VS Code / Cursor (via an MCP server) to provide **progressive disclosure** — only loading API context when you actually need it, avoiding context window pollution.
 
 ## Why This Exists
 
@@ -78,7 +78,7 @@ libctx inspect requests   libctx inspect requests     libctx inspect requests
   (no signatures)           for one module              across all modules
 ```
 
-The `/lib` skill (Claude Code) and MCP server (VS Code / Cursor) automate this workflow — the AI assistant decides what to inspect based on the task at hand.
+The `/lib` skill (Claude Code, GitHub Copilot) and MCP server (Claude Code, VS Code, Cursor) automate this workflow — the AI assistant decides what to inspect based on the task at hand.
 
 ### Direct CLI Usage
 
@@ -303,7 +303,7 @@ All async operations use httpx internally.
 | `diff.py` | API diff between two package versions with breaking change detection |
 | `cache.py` | Persistent disk cache with mtime/file-count invalidation and LRU eviction |
 | `cli.py` | CLI entry point — `inspect`, `install`, `diff`, and `cache` subcommands |
-| `mcp_server.py` | MCP server for VS Code / Cursor integration (optional) |
+| `mcp_server.py` | MCP server for Claude Code / VS Code / Cursor integration (optional) |
 
 ## Development
 
