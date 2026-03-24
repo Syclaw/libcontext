@@ -684,10 +684,9 @@ def test_get_installed_package_names_handles_import_error() -> None:
     dists = [
         _make_mock_dist("requests"),
     ]
-    with (
-        patch(_PKGS_DISTS_PATH, side_effect=ImportError("cannot import name '__version__' from '_csv'")),
-        patch(_DISTS_PATH, return_value=dists),
-    ):
+    err = ImportError("cannot import name '__version__' from '_csv'")
+    with patch(_PKGS_DISTS_PATH, side_effect=err), \
+         patch(_DISTS_PATH, return_value=dists):
         names = _get_installed_package_names()
 
     # Should still collect names from distributions() fallback
@@ -699,10 +698,8 @@ def test_get_installed_package_names_handles_generic_exception() -> None:
     dists = [
         _make_mock_dist("flask"),
     ]
-    with (
-        patch(_PKGS_DISTS_PATH, side_effect=RuntimeError("broken metadata")),
-        patch(_DISTS_PATH, return_value=dists),
-    ):
+    with patch(_PKGS_DISTS_PATH, side_effect=RuntimeError("broken metadata")), \
+         patch(_DISTS_PATH, return_value=dists):
         names = _get_installed_package_names()
 
     assert "flask" in names
@@ -714,10 +711,8 @@ def test_suggest_similar_packages_resilient_to_import_error() -> None:
         _make_mock_dist("requests"),
         _make_mock_dist("flask"),
     ]
-    with (
-        patch(_PKGS_DISTS_PATH, side_effect=ImportError("csv import broken")),
-        patch(_DISTS_PATH, return_value=dists),
-    ):
+    with patch(_PKGS_DISTS_PATH, side_effect=ImportError("csv import broken")), \
+         patch(_DISTS_PATH, return_value=dists):
         suggestions = suggest_similar_packages("reqeusts")
 
     assert "requests" in suggestions
@@ -729,19 +724,15 @@ def test_collect_package_error_includes_suggestions() -> None:
         _make_mock_dist("click"),
         _make_mock_dist("flask"),
     ]
-    with (
-        patch(_DISTS_PATH, return_value=dists),
-        pytest.raises(PackageNotFoundError, match="Did you mean"),
-    ):
+    with patch(_DISTS_PATH, return_value=dists), \
+         pytest.raises(PackageNotFoundError, match="Did you mean"):
         collect_package("clck")
 
 
 def test_collect_package_error_no_suggestions() -> None:
     """PackageNotFoundError without suggestions shows install hint."""
-    with (
-        patch(_DISTS_PATH, return_value=[]),
-        pytest.raises(PackageNotFoundError, match="Make sure it is installed"),
-    ):
+    with patch(_DISTS_PATH, return_value=[]), \
+         pytest.raises(PackageNotFoundError, match="Make sure it is installed"):
         collect_package("totally_nonexistent_pkg_xyz_999")
 
 
