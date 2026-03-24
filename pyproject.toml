@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "libcontext"
-version = "0.5.0"
+version = "0.6.0"
 description = "Generate optimized LLM context from Python library APIs — CLI, skill, and MCP server"
 readme = "README.md"
 license = "MIT"
