@@ -9,8 +9,13 @@ discovery works against the target environment.
 
 Detection priority:
 1. Explicit ``--python`` argument → use that environment.
-2. ``.venv/`` or ``venv/`` in CWD → use the detected venv.
-3. Neither → use the current process's environment (no injection).
+2. ``VIRTUAL_ENV`` env var → activated venv (any tool).
+3. ``CONDA_PREFIX`` env var → activated conda environment.
+4. ``UV_PROJECT_ENVIRONMENT`` env var → uv-specific override.
+5. ``.venv/`` or ``venv/`` in CWD → use the detected venv.
+6. ``uv`` fallback: if CWD has ``pyproject.toml``, query ``uv`` for the
+   project interpreter.
+7. Neither → use the current process's environment (no injection).
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import os
 import subprocess
 import sys
 from collections.abc import Generator
@@ -33,13 +39,36 @@ _SUBPROCESS_TIMEOUT_SECONDS = 10
 
 _VENV_DIR_NAMES = (".venv", "venv")
 
+# Relative interpreter paths inside a venv, checked in order.
+_INTERPRETER_CANDIDATES = (
+    Path("Scripts") / "python.exe",  # Windows
+    Path("bin") / "python",  # Unix
+    Path("bin") / "python3",  # Unix alternative
+)
+
+
+def _has_python_interpreter(venv_dir: Path) -> bool:
+    """Check whether a directory contains a recognisable Python interpreter."""
+    return any((venv_dir / rel).is_file() for rel in _INTERPRETER_CANDIDATES)
+
 
 def auto_detect_venv(cwd: Path | None = None) -> Path | None:
     """Detect a project venv in the current working directory.
 
-    Checks for ``.venv/`` then ``venv/`` in *cwd* (defaults to
-    ``Path.cwd()``).  Only considers directories that contain a
-    recognisable Python interpreter.
+    Detection order:
+
+    1. ``VIRTUAL_ENV`` env var — set by any activated venv (virtualenv,
+       ``python -m venv``, ``poetry shell``, etc.).
+    2. ``CONDA_PREFIX`` env var — set by an activated conda environment.
+    3. ``UV_PROJECT_ENVIRONMENT`` env var — used when ``uv`` is configured
+       to place the venv outside the default ``.venv/`` location.
+    4. ``.venv/`` then ``venv/`` in *cwd*.
+    5. ``uv`` fallback — if *cwd* contains a ``pyproject.toml``, query
+       ``uv python find`` to locate the project interpreter and derive
+       the venv from its path.
+
+    Only considers directories that contain a recognisable Python
+    interpreter.
 
     Args:
         cwd: Directory to search in.  Defaults to the process CWD.
@@ -50,20 +79,80 @@ def auto_detect_venv(cwd: Path | None = None) -> Path | None:
     if cwd is None:
         cwd = Path.cwd()
 
+    # 1. VIRTUAL_ENV — set by any venv activation script
+    # 2. CONDA_PREFIX — set by conda activate
+    # 3. UV_PROJECT_ENVIRONMENT — uv-specific override
+    for var in ("VIRTUAL_ENV", "CONDA_PREFIX", "UV_PROJECT_ENVIRONMENT"):
+        value = os.environ.get(var)
+        if not value:
+            continue
+        candidate = Path(value)
+        if candidate.is_dir() and _has_python_interpreter(candidate):
+            logger.debug("Auto-detected venv from %s: '%s'", var, candidate)
+            return candidate
+        logger.debug("%s='%s' set but not a valid venv", var, value)
+
+    # 4. Standard .venv/ and venv/ in CWD
     for name in _VENV_DIR_NAMES:
         candidate = cwd / name
-        if not candidate.is_dir():
-            continue
-        # Verify it actually contains an interpreter
-        interpreters = [
-            candidate / "Scripts" / "python.exe",
-            candidate / "bin" / "python",
-            candidate / "bin" / "python3",
-        ]
-        if any(exe.is_file() for exe in interpreters):
+        if candidate.is_dir() and _has_python_interpreter(candidate):
             logger.debug("Auto-detected venv at '%s'", candidate)
             return candidate
 
+    # 5. uv fallback — ask uv for the project interpreter
+    if (cwd / "pyproject.toml").is_file():
+        venv = _detect_venv_via_uv(cwd)
+        if venv is not None:
+            return venv
+
+    return None
+
+
+def _detect_venv_via_uv(cwd: Path) -> Path | None:
+    """Ask ``uv`` for the project interpreter and derive the venv path.
+
+    Only called when a ``pyproject.toml`` exists in *cwd* but no
+    standard venv directory was found.
+    """
+    try:
+        result = subprocess.run(
+            ["uv", "python", "find", "--project", str(cwd)],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+            cwd=str(cwd),
+        )
+    except FileNotFoundError:
+        logger.debug("uv not found on PATH; skipping uv-based detection")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.debug("uv python find timed out; skipping uv-based detection")
+        return None
+
+    if result.returncode != 0:
+        logger.debug(
+            "uv python find exited with code %d; skipping",
+            result.returncode,
+        )
+        return None
+
+    python_path = Path(result.stdout.strip())
+    if not python_path.is_file():
+        logger.debug("uv reported interpreter '%s' but file not found", python_path)
+        return None
+
+    # Derive venv from interpreter path:
+    # .../venv/bin/python  → .../venv
+    # .../venv/Scripts/python.exe → .../venv
+    venv_dir = python_path.parent.parent
+    if (venv_dir / "pyvenv.cfg").is_file():
+        logger.debug("Auto-detected venv via uv at '%s'", venv_dir)
+        return venv_dir
+
+    logger.debug(
+        "uv interpreter '%s' is not inside a venv (no pyvenv.cfg)",
+        python_path,
+    )
     return None
 
 
@@ -151,12 +240,7 @@ def resolve_python_executable(python_arg: str) -> Path:
 
     # Directory — probe for interpreter
     if path.is_dir():
-        candidates = [
-            path / "Scripts" / "python.exe",  # Windows venv
-            path / "bin" / "python",  # Unix venv
-            path / "bin" / "python3",  # Unix alternative
-        ]
-        for candidate in candidates:
+        for candidate in (path / rel for rel in _INTERPRETER_CANDIDATES):
             if candidate.is_file():
                 logger.debug(
                     "Resolved venv directory '%s' to interpreter '%s'",

@@ -36,7 +36,11 @@ class PackageNotFoundError(LibcontextError):
             joined = ", ".join(self.suggestions)
             msg += f" Did you mean: {joined}?"
         else:
-            msg += " Make sure it is installed in the current environment."
+            msg += (
+                " Make sure it is installed in the current environment."
+                " If installed in a project venv, run from the project"
+                " directory or use --python <path-to-venv>."
+            )
         super().__init__(msg)
 
 

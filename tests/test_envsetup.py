@@ -161,22 +161,36 @@ def test_cache_filename_with_env_tag():
 # auto_detect_venv
 # ---------------------------------------------------------------------------
 
+_VENV_ENV_VARS = ("VIRTUAL_ENV", "CONDA_PREFIX", "UV_PROJECT_ENVIRONMENT")
 
-def _make_fake_venv(parent: Path) -> Path:
-    """Create a fake venv directory with a recognisable interpreter."""
-    venv = parent / ".venv"
-    venv.mkdir()
+
+@pytest.fixture()
+def _clean_venv_env(monkeypatch):
+    """Remove venv-related env vars so auto_detect_venv tests are isolated."""
+    for var in _VENV_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+def _make_fake_venv_at(path: Path) -> Path:
+    """Create a fake venv at an arbitrary path."""
+    path.mkdir(exist_ok=True)
     if sys.platform == "win32":
-        scripts = venv / "Scripts"
-        scripts.mkdir()
+        scripts = path / "Scripts"
+        scripts.mkdir(exist_ok=True)
         (scripts / "python.exe").write_text("fake", encoding="utf-8")
     else:
-        bin_dir = venv / "bin"
-        bin_dir.mkdir()
+        bin_dir = path / "bin"
+        bin_dir.mkdir(exist_ok=True)
         (bin_dir / "python").write_text("fake", encoding="utf-8")
-    return venv
+    return path
 
 
+def _make_fake_venv(parent: Path) -> Path:
+    """Create a fake .venv/ directory with a recognisable interpreter."""
+    return _make_fake_venv_at(parent / ".venv")
+
+
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_auto_detect_venv_finds_dotvenv(tmp_path):
     """Detects .venv/ in the given directory."""
     _make_fake_venv(tmp_path)
@@ -185,46 +199,65 @@ def test_auto_detect_venv_finds_dotvenv(tmp_path):
     assert result.name == ".venv"
 
 
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_auto_detect_venv_finds_venv(tmp_path):
     """Detects venv/ when .venv/ is absent."""
-    venv = tmp_path / "venv"
-    venv.mkdir()
-    if sys.platform == "win32":
-        scripts = venv / "Scripts"
-        scripts.mkdir()
-        (scripts / "python.exe").write_text("fake", encoding="utf-8")
-    else:
-        bin_dir = venv / "bin"
-        bin_dir.mkdir()
-        (bin_dir / "python").write_text("fake", encoding="utf-8")
-
+    _make_fake_venv_at(tmp_path / "venv")
     result = auto_detect_venv(tmp_path)
     assert result is not None
     assert result.name == "venv"
 
 
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_auto_detect_venv_prefers_dotvenv(tmp_path):
     """.venv/ takes priority over venv/."""
     _make_fake_venv(tmp_path)
-    venv = tmp_path / "venv"
-    venv.mkdir()
-    if sys.platform == "win32":
-        (venv / "Scripts").mkdir()
-        (venv / "Scripts" / "python.exe").write_text("fake", encoding="utf-8")
-    else:
-        (venv / "bin").mkdir()
-        (venv / "bin" / "python").write_text("fake", encoding="utf-8")
-
+    _make_fake_venv_at(tmp_path / "venv")
     result = auto_detect_venv(tmp_path)
     assert result is not None
     assert result.name == ".venv"
 
 
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_auto_detect_venv_returns_none_when_absent(tmp_path):
     """Returns None when no venv directory exists."""
     assert auto_detect_venv(tmp_path) is None
 
 
+@pytest.mark.usefixtures("_clean_venv_env")
+@pytest.mark.parametrize("var", _VENV_ENV_VARS)
+def test_auto_detect_venv_env_var(tmp_path, monkeypatch, var):
+    """Detects venv from VIRTUAL_ENV, CONDA_PREFIX, or UV_PROJECT_ENVIRONMENT."""
+    custom_venv = _make_fake_venv_at(tmp_path / "custom-env")
+    monkeypatch.setenv(var, str(custom_venv))
+    result = auto_detect_venv(tmp_path)
+    assert result is not None
+    assert result == custom_venv
+
+
+@pytest.mark.usefixtures("_clean_venv_env")
+def test_auto_detect_venv_virtual_env_takes_priority(tmp_path, monkeypatch):
+    """VIRTUAL_ENV wins over CONDA_PREFIX and UV_PROJECT_ENVIRONMENT."""
+    venv_a = _make_fake_venv_at(tmp_path / "venv-a")
+    venv_b = _make_fake_venv_at(tmp_path / "venv-b")
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv_a))
+    monkeypatch.setenv("CONDA_PREFIX", str(venv_b))
+    result = auto_detect_venv(tmp_path)
+    assert result == venv_a
+
+
+@pytest.mark.usefixtures("_clean_venv_env")
+def test_auto_detect_venv_env_var_invalid_falls_through(tmp_path, monkeypatch):
+    """Falls through when env var points to an invalid dir."""
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "nonexistent"))
+    _make_fake_venv(tmp_path)
+    result = auto_detect_venv(tmp_path)
+    # Should fall through to .venv detection
+    assert result is not None
+    assert result.name == ".venv"
+
+
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_auto_detect_venv_ignores_dir_without_interpreter(tmp_path):
     """A .venv/ directory without an interpreter is ignored."""
     (tmp_path / ".venv").mkdir()
@@ -243,12 +276,14 @@ def test_setup_environment_explicit_python():
     assert len(tag) == 8
 
 
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_setup_environment_no_venv_returns_none(tmp_path):
     """No venv, no --python → returns None (no injection)."""
     tag = setup_environment(None, cwd=tmp_path)
     assert tag is None
 
 
+@pytest.mark.usefixtures("_clean_venv_env")
 def test_setup_environment_auto_detects(tmp_path, monkeypatch):
     """Auto-detects .venv/ and returns an env_tag when using real interpreter."""
     # Point the fake venv at the real interpreter so subprocess works
