@@ -448,12 +448,20 @@ def render_module(module: ModuleInfo) -> str:
     # Determine public API boundary
     exports = set(module.all_exports) if module.all_exports is not None else None
 
-    # Type Aliases
-    type_aliases = [
-        v
-        for v in module.variables
-        if _is_public_name(v.name, exports) and v.is_type_alias
-    ]
+    # Categorise public variables in a single pass
+    type_aliases: list[VariableInfo] = []
+    public_constants: list[VariableInfo] = []
+    public_vars: list[VariableInfo] = []
+    for v in module.variables:
+        if not _is_public_name(v.name, exports):
+            continue
+        if v.is_type_alias:
+            type_aliases.append(v)
+        elif v.name.isupper():
+            public_constants.append(v)
+        else:
+            public_vars.append(v)
+
     if type_aliases:
         lines.append("")
         lines.append("**Type Aliases:**")
@@ -478,26 +486,12 @@ def render_module(module: ModuleInfo) -> str:
             else:
                 lines.append(_render_function(item))
 
-    # Constants (UPPER_CASE variables, excluding type aliases)
-    public_constants = [
-        v
-        for v in module.variables
-        if _is_public_name(v.name, exports) and v.name.isupper() and not v.is_type_alias
-    ]
     if public_constants:
         lines.append("")
         lines.append("**Constants:**")
         for var in public_constants:
             lines.append(_render_variable(var))
 
-    # Module-level variables (non-constant, excluding type aliases)
-    public_vars = [
-        v
-        for v in module.variables
-        if _is_public_name(v.name, exports)
-        and not v.name.isupper()
-        and not v.is_type_alias
-    ]
     if public_vars:
         lines.append("")
         lines.append("**Module Variables:**")

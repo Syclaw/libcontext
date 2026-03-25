@@ -543,27 +543,21 @@ def _walk_package(
     # key = relative path without extension -> (py_path, pyi_path, stub_source)
     file_map: dict[str, tuple[Path | None, Path | None, str]] = {}
 
-    for py_file in _safe_rglob(package_path, "*.py"):
-        if not _is_safe_source_file(py_file, package_path):
+    for source_file in _safe_rglob(package_path, "*.py*"):
+        if source_file.suffix not in (".py", ".pyi"):
             continue
-        relative = py_file.relative_to(package_path)
+        if not _is_safe_source_file(source_file, package_path):
+            continue
+        relative = source_file.relative_to(package_path)
         parts = relative.parts
         if _should_skip_path(parts, include_private=config.include_private):
             continue
         key = str(relative.with_suffix(""))
-        file_map[key] = (py_file, None, "")
-
-    # Colocated .pyi files
-    for pyi_file in _safe_rglob(package_path, "*.pyi"):
-        if not _is_safe_source_file(pyi_file, package_path):
-            continue
-        relative = pyi_file.relative_to(package_path)
-        parts = relative.parts
-        if _should_skip_path(parts, include_private=config.include_private):
-            continue
-        key = str(relative.with_suffix(""))
-        existing = file_map.get(key, (None, None, ""))
-        file_map[key] = (existing[0], pyi_file, "colocated")
+        if source_file.suffix == ".py":
+            file_map[key] = (source_file, None, "")
+        else:
+            existing = file_map.get(key, (None, None, ""))
+            file_map[key] = (existing[0], source_file, "colocated")
 
     # Standalone stub .pyi files
     if stub_path is not None:

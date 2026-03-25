@@ -82,19 +82,20 @@ def _compute_source_stats(package_path: Path) -> _SourceStats:
 
     max_mtime = 0.0
     file_count = 0
-    for pattern in ("*.py", "*.pyi"):
-        for f in package_path.rglob(pattern):
-            if not is_within_boundary(f, package_path):
-                continue
-            if not check_file_size(f):
-                continue
-            try:
-                mtime = f.stat().st_mtime
-                if mtime > max_mtime:
-                    max_mtime = mtime
-                file_count += 1
-            except OSError:
-                continue
+    for f in package_path.rglob("*.py*"):
+        if f.suffix not in (".py", ".pyi"):
+            continue
+        if not is_within_boundary(f, package_path):
+            continue
+        if not check_file_size(f):
+            continue
+        try:
+            mtime = f.stat().st_mtime
+            if mtime > max_mtime:
+                max_mtime = mtime
+            file_count += 1
+        except OSError:
+            continue
     return _SourceStats(max_mtime=max_mtime, file_count=file_count)
 
 
@@ -236,11 +237,13 @@ def _evict_oldest(cache_dir: Path) -> None:
             entries.append((f, f.stat().st_mtime))
         except OSError:
             continue
+    if len(entries) <= _MAX_CACHE_ENTRIES:
+        return
     entries.sort(key=lambda x: x[1])
-    while len(entries) > _MAX_CACHE_ENTRIES:
-        oldest_path, _ = entries.pop(0)
-        logger.debug("Evicting cache entry: %s", oldest_path.name)
-        _safe_delete(oldest_path)
+    to_remove = entries[: len(entries) - _MAX_CACHE_ENTRIES]
+    for path, _ in to_remove:
+        logger.debug("Evicting cache entry: %s", path.name)
+        _safe_delete(path)
 
 
 # ---------------------------------------------------------------------------
