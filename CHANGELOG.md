@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-25
+
+### Fixed
+
+- **ImportError crash with `packages_distributions()`**: wrapped call in try/except to handle broken metadata or mixed Python installations (e.g. `_csv` ImportError on Python 3.13).
+- **Python 3.9 compatibility**: fixed parenthesized context managers and `create=True` for `mock.patch`.
+
 ## [0.5.0] - 2026-03-23
 
 ### Added
