@@ -131,6 +131,20 @@ _VALID_KINDS = frozenset({"class", "function", "variable", "alias"})
 _DOCSTRING_MATCH_PREVIEW_LEN = 60
 
 
+@dataclass
+class _SearchHit:
+    """A single search match found during package traversal."""
+
+    kind: str  # "class", "method", "function", "variable", "alias"
+    module: str
+    name: str
+    match_in: str  # "name" or "docstring"
+    signature: str
+    class_name: str | None = None
+    docstring: str | None = None
+    overload_signatures: list[str] | None = None
+
+
 def _matches(name: str, docstring: str | None, query_lower: str) -> str | None:
     """Check if an entity matches the search query.
 
@@ -564,6 +578,225 @@ def render_package_overview(package: PackageInfo) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Search — shared traversal
+# ---------------------------------------------------------------------------
+
+
+def _collect_search_hits(
+    package: PackageInfo,
+    query: str,
+    kind: str | None,
+) -> list[_SearchHit]:
+    """Traverse a package and collect all entities matching *query*.
+
+    Shared implementation for both Markdown and structured search output.
+
+    Args:
+        package: The collected package information.
+        query: Search term (case-insensitive substring match).
+        kind: Filter by entity type, or ``None`` for all types.
+
+    Returns:
+        List of ``_SearchHit`` in traversal order.
+    """
+    query_lower = query.lower()
+    hits: list[_SearchHit] = []
+
+    for mod in package.non_empty_modules:
+        exports = set(mod.all_exports) if mod.all_exports is not None else None
+
+        if kind is None or kind in ("class", "function"):
+            for cls in mod.classes:
+                if not _is_public_name(cls.name, exports):
+                    continue
+                _collect_class_hits(mod, cls, query_lower, kind, hits)
+
+        if kind is None or kind == "function":
+            _collect_function_hits(mod, exports, query_lower, hits)
+
+        if kind in ("variable", "alias"):
+            _collect_variable_hits(mod, exports, query_lower, kind, hits)
+
+    return hits
+
+
+def _collect_class_hits(
+    mod: ModuleInfo,
+    cls: ClassInfo,
+    query_lower: str,
+    kind: str | None,
+    hits: list[_SearchHit],
+) -> None:
+    """Collect class and method matches for a single class."""
+    if kind is None or kind == "class":
+        match_type = _matches(cls.name, cls.docstring, query_lower)
+        if match_type:
+            bases = f"({', '.join(cls.bases)})" if cls.bases else ""
+            hits.append(
+                _SearchHit(
+                    kind="class",
+                    module=mod.name,
+                    name=cls.name,
+                    match_in=match_type,
+                    signature=f"class {cls.name}{bases}",
+                    docstring=cls.docstring,
+                )
+            )
+
+    if kind is None or kind == "function":
+        visible = [
+            m for m in cls.methods if is_public_member(m.name, is_method=True)
+        ]
+        for item in _group_overloads(visible):
+            if isinstance(item, _OverloadGroup):
+                doc = _resolve_overload_docstring(item)
+                match_type = _matches(item.name, doc, query_lower)
+                if match_type:
+                    hits.append(
+                        _SearchHit(
+                            kind="method",
+                            module=mod.name,
+                            name=item.name,
+                            match_in=match_type,
+                            signature=_format_signature(
+                                item.overloads[0], compact=True
+                            ),
+                            class_name=cls.name,
+                            docstring=doc,
+                            overload_signatures=[
+                                _format_signature(o, compact=True)
+                                for o in item.overloads
+                            ],
+                        )
+                    )
+            else:
+                match_type = _matches(item.name, item.docstring, query_lower)
+                if match_type:
+                    hits.append(
+                        _SearchHit(
+                            kind="method",
+                            module=mod.name,
+                            name=item.name,
+                            match_in=match_type,
+                            signature=_format_signature(item, compact=True),
+                            class_name=cls.name,
+                            docstring=item.docstring,
+                        )
+                    )
+
+
+def _collect_function_hits(
+    mod: ModuleInfo,
+    exports: set[str] | None,
+    query_lower: str,
+    hits: list[_SearchHit],
+) -> None:
+    """Collect function matches for a module."""
+    public_functions = [
+        f for f in mod.functions if _is_public_name(f.name, exports)
+    ]
+    for item in _group_overloads(public_functions):
+        if isinstance(item, _OverloadGroup):
+            doc = _resolve_overload_docstring(item)
+            match_type = _matches(item.name, doc, query_lower)
+            if match_type:
+                hits.append(
+                    _SearchHit(
+                        kind="function",
+                        module=mod.name,
+                        name=item.name,
+                        match_in=match_type,
+                        signature=_format_signature(
+                            item.overloads[0], compact=False
+                        ),
+                        docstring=doc,
+                        overload_signatures=[
+                            _format_signature(o, compact=False)
+                            for o in item.overloads
+                        ],
+                    )
+                )
+        else:
+            match_type = _matches(item.name, item.docstring, query_lower)
+            if match_type:
+                hits.append(
+                    _SearchHit(
+                        kind="function",
+                        module=mod.name,
+                        name=item.name,
+                        match_in=match_type,
+                        signature=_format_signature(item),
+                        docstring=item.docstring,
+                    )
+                )
+
+
+def _collect_variable_hits(
+    mod: ModuleInfo,
+    exports: set[str] | None,
+    query_lower: str,
+    kind: str | None,
+    hits: list[_SearchHit],
+) -> None:
+    """Collect variable/alias matches for a module."""
+    for var in mod.variables:
+        if not _is_public_name(var.name, exports):
+            continue
+        is_alias = var.is_type_alias
+        if kind == "alias" and not is_alias:
+            continue
+        if kind == "variable" and is_alias:
+            continue
+        if query_lower in var.name.lower():
+            ann = f": {var.annotation}" if var.annotation else ""
+            val = f" = {var.value}" if var.value else ""
+            hits.append(
+                _SearchHit(
+                    kind="alias" if is_alias else "variable",
+                    module=mod.name,
+                    name=var.name,
+                    match_in="name",
+                    signature=f"{var.name}{ann}{val}",
+                )
+            )
+
+
+# ---------------------------------------------------------------------------
+# Search — Markdown output
+# ---------------------------------------------------------------------------
+
+
+def _hit_to_markdown(hit: _SearchHit) -> str:
+    """Format a single search hit as a Markdown list item."""
+    if hit.kind == "class":
+        line = f"- class `{hit.module}.{hit.signature}`"
+    elif hit.kind == "method":
+        if hit.overload_signatures:
+            sigs = "\n  ".join(f"`{s}`" for s in hit.overload_signatures)
+            line = (
+                f"- method `{hit.module}.{hit.class_name}.{hit.name}`"
+                f" (overloaded)\n  {sigs}"
+            )
+        else:
+            line = f"- method `{hit.module}.{hit.class_name}.{hit.signature}`"
+    elif hit.kind == "function":
+        if hit.overload_signatures:
+            sigs = "\n  ".join(f"`{s}`" for s in hit.overload_signatures)
+            line = (
+                f"- function `{hit.module}.{hit.name}`"
+                f" (overloaded)\n  {sigs}"
+            )
+        else:
+            line = f"- function `{hit.module}.{hit.signature}`"
+    else:
+        line = f"- variable `{hit.module}.{hit.signature}`"
+
+    if hit.match_in == "docstring":
+        line += f"\n  {_format_docstring_match(hit.docstring)}"
+    return line
+
+
 def search_package(
     package: PackageInfo,
     query: str,
@@ -596,123 +829,45 @@ def search_package(
         msg = f"Invalid kind {kind!r}. Accepted values: {valid}"
         raise ValueError(msg)
 
-    query_lower = query.lower()
-    results: list[str] = []
+    hits = _collect_search_hits(package, query, kind)
 
-    for mod in package.non_empty_modules:
-        exports = set(mod.all_exports) if mod.all_exports is not None else None
-
-        # Classes + Methods
-        if kind is None or kind in ("class", "function"):
-            for cls in mod.classes:
-                if not _is_public_name(cls.name, exports):
-                    continue
-
-                # Class match
-                if kind is None or kind == "class":
-                    match_type = _matches(cls.name, cls.docstring, query_lower)
-                    if match_type:
-                        bases = f"({', '.join(cls.bases)})" if cls.bases else ""
-                        line = f"- class `{mod.name}.{cls.name}{bases}`"
-                        if match_type == "docstring":
-                            line += f"\n  {_format_docstring_match(cls.docstring)}"
-                        results.append(line)
-
-                # Method matches
-                if kind is None or kind == "function":
-                    visible_methods = [
-                        m
-                        for m in cls.methods
-                        if is_public_member(m.name, is_method=True)
-                    ]
-                    for item in _group_overloads(visible_methods):
-                        if isinstance(item, _OverloadGroup):
-                            doc = _resolve_overload_docstring(item)
-                            match_type = _matches(item.name, doc, query_lower)
-                            if match_type:
-                                sigs = "\n  ".join(
-                                    f"`{_format_signature(o, compact=True)}`"
-                                    for o in item.overloads
-                                )
-                                line = (
-                                    f"- method `{mod.name}.{cls.name}.{item.name}`"
-                                    f" (overloaded)\n  {sigs}"
-                                )
-                                if match_type == "docstring":
-                                    line += f"\n  {_format_docstring_match(doc)}"
-                                results.append(line)
-                        else:
-                            match_type = _matches(
-                                item.name, item.docstring, query_lower
-                            )
-                            if match_type:
-                                sig = _format_signature(item, compact=True)
-                                line = f"- method `{mod.name}.{cls.name}.{sig}`"
-                                if match_type == "docstring":
-                                    line += (
-                                        f"\n  {_format_docstring_match(item.docstring)}"
-                                    )
-                                results.append(line)
-
-        # Functions
-        if kind is None or kind == "function":
-            public_functions = [
-                f for f in mod.functions if _is_public_name(f.name, exports)
-            ]
-            for item in _group_overloads(public_functions):
-                if isinstance(item, _OverloadGroup):
-                    doc = _resolve_overload_docstring(item)
-                    match_type = _matches(item.name, doc, query_lower)
-                    if match_type:
-                        sigs = "\n  ".join(
-                            f"`{_format_signature(o, compact=False)}`"
-                            for o in item.overloads
-                        )
-                        line = (
-                            f"- function `{mod.name}.{item.name}`"
-                            f" (overloaded)\n  {sigs}"
-                        )
-                        if match_type == "docstring":
-                            line += f"\n  {_format_docstring_match(doc)}"
-                        results.append(line)
-                else:
-                    match_type = _matches(item.name, item.docstring, query_lower)
-                    if match_type:
-                        sig = _format_signature(item)
-                        line = f"- function `{mod.name}.{sig}`"
-                        if match_type == "docstring":
-                            line += f"\n  {_format_docstring_match(item.docstring)}"
-                        results.append(line)
-
-        # Variables (only with explicit kind filter)
-        if kind in ("variable", "alias"):
-            for var in mod.variables:
-                if not _is_public_name(var.name, exports):
-                    continue
-                is_alias = var.is_type_alias
-                if kind == "alias" and not is_alias:
-                    continue
-                if kind == "variable" and is_alias:
-                    continue
-                if query_lower in var.name.lower():
-                    ann = f": {var.annotation}" if var.annotation else ""
-                    val = f" = {var.value}" if var.value else ""
-                    results.append(f"- variable `{mod.name}.{var.name}{ann}{val}`")
-
-    if not results:
+    if not hits:
         return f"No matches for '{query}' in {package.name}."
 
     cap = max_results if max_results > 0 else DEFAULT_MAX_SEARCH_RESULTS
-    if len(results) > cap:
-        truncated = results[:cap]
-        omitted = len(results) - cap
-        truncated.append(
+    results = [_hit_to_markdown(h) for h in hits[:cap]]
+    if len(hits) > cap:
+        omitted = len(hits) - cap
+        results.append(
             f"\n*… {omitted} more results omitted. "
             f"Narrow your query or use `--kind` to filter.*"
         )
-        return "\n".join(truncated)
 
     return "\n".join(results)
+
+
+# ---------------------------------------------------------------------------
+# Search — structured (JSON) output
+# ---------------------------------------------------------------------------
+
+
+def _hit_to_dict(hit: _SearchHit) -> dict[str, str]:
+    """Format a single search hit as a structured dict."""
+    entry: dict[str, str] = {
+        "kind": hit.kind,
+        "module": hit.module,
+        "name": hit.name,
+        "signature": hit.signature,
+        "match_in": hit.match_in,
+    }
+    if hit.class_name:
+        entry["class"] = hit.class_name
+    if hit.overload_signatures and len(hit.overload_signatures) > 1:
+        entry["overload_count"] = str(len(hit.overload_signatures))
+    if hit.match_in == "docstring":
+        para = _first_paragraph(hit.docstring) or ""
+        entry["docstring_preview"] = para[:_DOCSTRING_MATCH_PREVIEW_LEN]
+    return entry
 
 
 def search_package_structured(
@@ -725,8 +880,7 @@ def search_package_structured(
     """Search and return structured results for JSON output.
 
     Same matching logic as ``search_package()`` but returns dicts
-    instead of Markdown strings. Uses ``_group_overloads()``
-    to deduplicate overloaded functions.
+    instead of Markdown strings.
 
     Args:
         package: The collected package information.
@@ -746,162 +900,9 @@ def search_package_structured(
         msg = f"Invalid kind {kind!r}. Accepted values: {valid}"
         raise ValueError(msg)
 
-    query_lower = query.lower()
-    results: list[dict[str, str]] = []
-
-    for mod in package.non_empty_modules:
-        exports = set(mod.all_exports) if mod.all_exports is not None else None
-
-        # Classes + Methods
-        if kind is None or kind in ("class", "function"):
-            for cls in mod.classes:
-                if not _is_public_name(cls.name, exports):
-                    continue
-
-                # Class match
-                if kind is None or kind == "class":
-                    match_type = _matches(cls.name, cls.docstring, query_lower)
-                    if match_type:
-                        bases = f"({', '.join(cls.bases)})" if cls.bases else ""
-                        entry: dict[str, str] = {
-                            "kind": "class",
-                            "module": mod.name,
-                            "name": cls.name,
-                            "signature": f"class {cls.name}{bases}",
-                            "match_in": match_type,
-                        }
-                        if match_type == "docstring":
-                            para = _first_paragraph(cls.docstring) or ""
-                            entry["docstring_preview"] = para[
-                                :_DOCSTRING_MATCH_PREVIEW_LEN
-                            ]
-                        results.append(entry)
-
-                # Method matches
-                if kind is None or kind == "function":
-                    visible_methods = [
-                        m
-                        for m in cls.methods
-                        if is_public_member(m.name, is_method=True)
-                    ]
-                    for item in _group_overloads(visible_methods):
-                        if isinstance(item, _OverloadGroup):
-                            doc = _resolve_overload_docstring(item)
-                            match_type = _matches(item.name, doc, query_lower)
-                            if match_type:
-                                sigs = [
-                                    _format_signature(o, compact=True)
-                                    for o in item.overloads
-                                ]
-                                entry = {
-                                    "kind": "method",
-                                    "module": mod.name,
-                                    "class": cls.name,
-                                    "name": item.name,
-                                    "signature": sigs[0],
-                                    "match_in": match_type,
-                                }
-                                if len(sigs) > 1:
-                                    entry["overload_count"] = str(len(sigs))
-                                if match_type == "docstring" and doc:
-                                    entry["docstring_preview"] = doc[
-                                        :_DOCSTRING_MATCH_PREVIEW_LEN
-                                    ]
-                                results.append(entry)
-                        else:
-                            match_type = _matches(
-                                item.name, item.docstring, query_lower
-                            )
-                            if match_type:
-                                sig = _format_signature(item, compact=True)
-                                entry = {
-                                    "kind": "method",
-                                    "module": mod.name,
-                                    "class": cls.name,
-                                    "name": item.name,
-                                    "signature": sig,
-                                    "match_in": match_type,
-                                }
-                                if match_type == "docstring":
-                                    para = _first_paragraph(item.docstring) or ""
-                                    entry["docstring_preview"] = para[
-                                        :_DOCSTRING_MATCH_PREVIEW_LEN
-                                    ]
-                                results.append(entry)
-
-        # Functions
-        if kind is None or kind == "function":
-            public_functions = [
-                f for f in mod.functions if _is_public_name(f.name, exports)
-            ]
-            for item in _group_overloads(public_functions):
-                if isinstance(item, _OverloadGroup):
-                    doc = _resolve_overload_docstring(item)
-                    match_type = _matches(item.name, doc, query_lower)
-                    if match_type:
-                        sigs = [
-                            _format_signature(o, compact=False) for o in item.overloads
-                        ]
-                        entry = {
-                            "kind": "function",
-                            "module": mod.name,
-                            "name": item.name,
-                            "signature": sigs[0],
-                            "match_in": match_type,
-                        }
-                        if len(sigs) > 1:
-                            entry["overload_count"] = str(len(sigs))
-                        if match_type == "docstring" and doc:
-                            entry["docstring_preview"] = doc[
-                                :_DOCSTRING_MATCH_PREVIEW_LEN
-                            ]
-                        results.append(entry)
-                else:
-                    match_type = _matches(item.name, item.docstring, query_lower)
-                    if match_type:
-                        sig = _format_signature(item)
-                        entry = {
-                            "kind": "function",
-                            "module": mod.name,
-                            "name": item.name,
-                            "signature": sig,
-                            "match_in": match_type,
-                        }
-                        if match_type == "docstring":
-                            para = _first_paragraph(item.docstring) or ""
-                            entry["docstring_preview"] = para[
-                                :_DOCSTRING_MATCH_PREVIEW_LEN
-                            ]
-                        results.append(entry)
-
-        # Variables (only with explicit kind filter)
-        if kind in ("variable", "alias"):
-            for var in mod.variables:
-                if not _is_public_name(var.name, exports):
-                    continue
-                is_alias = var.is_type_alias
-                if kind == "alias" and not is_alias:
-                    continue
-                if kind == "variable" and is_alias:
-                    continue
-                if query_lower in var.name.lower():
-                    ann = f": {var.annotation}" if var.annotation else ""
-                    val = f" = {var.value}" if var.value else ""
-                    results.append(
-                        {
-                            "kind": "alias" if is_alias else "variable",
-                            "module": mod.name,
-                            "name": var.name,
-                            "signature": f"{var.name}{ann}{val}",
-                            "match_in": "name",
-                        }
-                    )
-
+    hits = _collect_search_hits(package, query, kind)
     cap = max_results if max_results > 0 else DEFAULT_MAX_SEARCH_RESULTS
-    if len(results) > cap:
-        return results[:cap]
-
-    return results
+    return [_hit_to_dict(h) for h in hits[:cap]]
 
 
 def render_package(
