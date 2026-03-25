@@ -32,7 +32,12 @@ from ._security import truncate_output
 from .collector import collect_package
 from .diff import diff_packages
 from .exceptions import PackageNotFoundError
-from .models import PackageInfo, _deserialize_envelope, _serialize_envelope
+from .models import (
+    ModuleInfo,
+    PackageInfo,
+    _deserialize_envelope,
+    _serialize_envelope,
+)
 from .renderer import (
     render_diff,
     render_module,
@@ -77,6 +82,30 @@ def _collect_cached(package_name: str, include_private: bool = False) -> Package
 def _invalidate_cache() -> None:
     """Clear the collection cache."""
     _collect_cached.cache_clear()
+
+
+def _is_module_snapshot(data: dict[str, object]) -> bool:
+    """Return True if *data* looks like a ModuleInfo dict, not PackageInfo."""
+    return "modules" not in data and (
+        "functions" in data or "classes" in data or "variables" in data
+    )
+
+
+def _coerce_to_package(data: dict[str, object]) -> PackageInfo:
+    """Build a PackageInfo from either a package or module snapshot dict.
+
+    When ``get_api_json`` is called with a ``module_name``, the envelope
+    contains a single ModuleInfo dict.  This helper wraps it in a
+    synthetic PackageInfo so that ``diff_packages`` can compare them.
+    """
+    if _is_module_snapshot(data):
+        module_name: str = data.get("name", "unknown")  # type: ignore[assignment]
+        pkg_name = module_name.split(".")[0] if "." in module_name else module_name
+        return PackageInfo(
+            name=pkg_name,
+            modules=[ModuleInfo.from_dict(data)],  # type: ignore[arg-type]
+        )
+    return PackageInfo.from_dict(data)
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +266,8 @@ def diff_api(old_json: str, new_json: str, output_format: str = "markdown") -> s
     except ValueError as exc:
         return f"Error: {exc}"
 
-    old_pkg = PackageInfo.from_dict(old_data)
-    new_pkg = PackageInfo.from_dict(new_data)
+    old_pkg = _coerce_to_package(old_data)
+    new_pkg = _coerce_to_package(new_data)
     result = diff_packages(old_pkg, new_pkg)
 
     if output_format == "json":

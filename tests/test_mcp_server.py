@@ -362,6 +362,60 @@ class TestDiffApi:
         result = mcp_server.diff_api("{}", "{}")
         assert "Error:" in result
 
+    def test_module_level_snapshots(self):
+        """diff_api accepts module-level JSON produced by get_api_json."""
+        import dataclasses
+
+        from libcontext.models import _serialize_envelope
+
+        old_mod = ModuleInfo(
+            name="fakepkg.utils",
+            functions=[
+                FunctionInfo(
+                    name="parse",
+                    parameters=[ParameterInfo(name="text", annotation="str")],
+                    return_annotation="dict",
+                ),
+            ],
+        )
+        new_mod = ModuleInfo(
+            name="fakepkg.utils",
+            functions=[
+                FunctionInfo(
+                    name="parse",
+                    parameters=[
+                        ParameterInfo(name="text", annotation="str"),
+                        ParameterInfo(name="strict", annotation="bool"),
+                    ],
+                    return_annotation="dict",
+                ),
+            ],
+        )
+
+        old_json = json.dumps(_serialize_envelope(dataclasses.asdict(old_mod)))
+        new_json = json.dumps(_serialize_envelope(dataclasses.asdict(new_mod)))
+        result = mcp_server.diff_api(old_json, new_json)
+
+        assert "strict" in result
+        assert "Breaking" in result
+
+    def test_module_level_no_changes(self):
+        """Identical module snapshots produce 'No changes'."""
+        import dataclasses
+
+        from libcontext.models import _serialize_envelope
+
+        mod = ModuleInfo(
+            name="fakepkg.utils",
+            functions=[
+                FunctionInfo(name="parse", parameters=[], return_annotation="dict"),
+            ],
+        )
+        mod_json = json.dumps(_serialize_envelope(dataclasses.asdict(mod)))
+        result = mcp_server.diff_api(mod_json, mod_json)
+
+        assert "No changes" in result
+
 
 # ---------------------------------------------------------------------------
 # refresh_cache
