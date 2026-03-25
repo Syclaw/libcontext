@@ -424,8 +424,7 @@ def _safe_rglob(root: Path, pattern: str) -> list[Path]:
             results.append(path)
     except PermissionError:
         logger.warning(
-            "Permission denied while traversing '%s'; "
-            "some modules may be missing",
+            "Permission denied while traversing '%s'; some modules may be missing",
             root,
         )
     results.sort()

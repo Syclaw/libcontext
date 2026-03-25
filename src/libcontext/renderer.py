@@ -645,9 +645,7 @@ def _collect_class_hits(
             )
 
     if kind is None or kind == "function":
-        visible = [
-            m for m in cls.methods if is_public_member(m.name, is_method=True)
-        ]
+        visible = [m for m in cls.methods if is_public_member(m.name, is_method=True)]
         for item in _group_overloads(visible):
             if isinstance(item, _OverloadGroup):
                 doc = _resolve_overload_docstring(item)
@@ -693,9 +691,7 @@ def _collect_function_hits(
     hits: list[_SearchHit],
 ) -> None:
     """Collect function matches for a module."""
-    public_functions = [
-        f for f in mod.functions if _is_public_name(f.name, exports)
-    ]
+    public_functions = [f for f in mod.functions if _is_public_name(f.name, exports)]
     for item in _group_overloads(public_functions):
         if isinstance(item, _OverloadGroup):
             doc = _resolve_overload_docstring(item)
@@ -707,13 +703,10 @@ def _collect_function_hits(
                         module=mod.name,
                         name=item.name,
                         match_in=match_type,
-                        signature=_format_signature(
-                            item.overloads[0], compact=False
-                        ),
+                        signature=_format_signature(item.overloads[0], compact=False),
                         docstring=doc,
                         overload_signatures=[
-                            _format_signature(o, compact=False)
-                            for o in item.overloads
+                            _format_signature(o, compact=False) for o in item.overloads
                         ],
                     )
                 )
@@ -783,10 +776,7 @@ def _hit_to_markdown(hit: _SearchHit) -> str:
     elif hit.kind == "function":
         if hit.overload_signatures:
             sigs = "\n  ".join(f"`{s}`" for s in hit.overload_signatures)
-            line = (
-                f"- function `{hit.module}.{hit.name}`"
-                f" (overloaded)\n  {sigs}"
-            )
+            line = f"- function `{hit.module}.{hit.name}` (overloaded)\n  {sigs}"
         else:
             line = f"- function `{hit.module}.{hit.signature}`"
     else:
