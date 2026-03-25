@@ -41,7 +41,7 @@ class LibcontextConfig:
         """Create config from a dictionary (e.g. parsed TOML section).
 
         Raises:
-            TypeError: If a value has an unexpected type.
+            ConfigError: If a value has an unexpected type.
         """
         include_modules = data.get("include_modules", [])
         exclude_modules = data.get("exclude_modules", [])
@@ -120,6 +120,9 @@ def read_config_from_pyproject(pyproject_path: Path) -> LibcontextConfig:
 
     Returns:
         LibcontextConfig parsed from the file, or defaults if not found.
+
+    Raises:
+        ConfigError: If a config value has an unexpected type.
     """
     data = _load_toml(pyproject_path)
     tool_config = data.get("tool", {}).get("libcontext", {})

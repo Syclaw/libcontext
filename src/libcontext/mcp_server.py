@@ -274,6 +274,9 @@ def main() -> None:
     2. ``LIBCONTEXT_PYTHON`` env var → use that environment.
     3. Auto-detect ``.venv/`` or ``venv/`` in CWD → use the detected venv.
     4. None of the above → use the current process's environment.
+
+    Raises:
+        EnvironmentSetupError: If an explicit ``--python`` path is invalid.
     """
     import os
     import sys as _sys

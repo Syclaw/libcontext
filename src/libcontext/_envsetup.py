@@ -413,6 +413,9 @@ def env_tag_for_path(python_arg: str) -> str:
 
     Returns:
         An 8-character hex string derived from the resolved path.
+
+    Raises:
+        EnvironmentSetupError: If *python_arg* cannot be resolved.
     """
     resolved = resolve_python_executable(python_arg)
     return _env_tag_from_resolved(resolved)

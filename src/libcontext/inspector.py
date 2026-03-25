@@ -353,6 +353,9 @@ def inspect_source(
 
     Returns:
         ModuleInfo containing all extracted components.
+
+    Raises:
+        SyntaxError: If *source* is not valid Python.
     """
     tree = ast.parse(source)
 
