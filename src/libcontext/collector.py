@@ -50,13 +50,13 @@ def _get_installed_package_names() -> list[str]:
         try:
             for import_name in importlib.metadata.packages_distributions():
                 names.add(import_name)
-        except (ImportError, Exception):
-            # packages_distributions() may fail when the environment
-            # contains distributions with broken metadata or when a
-            # mixed Python installation causes an ImportError inside
-            # stdlib modules (e.g. csv).  Fall through to the
-            # distributions()-based collection below which is more
-            # resilient.
+        except Exception:
+            # Intentionally broad: packages_distributions() can fail
+            # in unpredictable ways depending on Python version and
+            # environment state (ImportError from broken stdlib
+            # modules, RuntimeError from corrupted metadata, etc.).
+            # The distributions()-based fallback below is more
+            # resilient, so any failure here is non-critical.
             logger.debug(
                 "packages_distributions() failed; falling back to distributions() only",
                 exc_info=True,

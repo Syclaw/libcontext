@@ -14,6 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ._security import (
+    DEFAULT_MAX_SEARCH_RESULTS,
+    escape_marker_name,
+    truncate_output,
+)
 from .inspector import is_public_member
 from .models import (
     ClassInfo,
@@ -697,8 +702,6 @@ def search_package(
     if not results:
         return f"No matches for '{query}' in {package.name}."
 
-    from ._security import DEFAULT_MAX_SEARCH_RESULTS
-
     cap = max_results if max_results > 0 else DEFAULT_MAX_SEARCH_RESULTS
     if len(results) > cap:
         truncated = results[:cap]
@@ -894,8 +897,6 @@ def search_package_structured(
                         }
                     )
 
-    from ._security import DEFAULT_MAX_SEARCH_RESULTS
-
     cap = max_results if max_results > 0 else DEFAULT_MAX_SEARCH_RESULTS
     if len(results) > cap:
         return results[:cap]
@@ -970,8 +971,6 @@ def render_package(
     output = "\n".join(lines)
 
     if max_output_chars > 0:
-        from ._security import truncate_output
-
         output = truncate_output(output, limit=max_output_chars)
 
     return output
@@ -996,8 +995,6 @@ def inject_into_file(
     Returns:
         The updated file contents.
     """
-    from ._security import escape_marker_name
-
     safe_name = escape_marker_name(package_name)
     begin = BEGIN_MARKER.format(name=safe_name)
     end = END_MARKER.format(name=safe_name)
