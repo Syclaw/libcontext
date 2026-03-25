@@ -75,7 +75,10 @@ def _get_installed_package_names() -> list[str]:
         if normalized != dist_name:
             names.add(normalized)
 
-        top_level = dist.read_text("top_level.txt")
+        try:
+            top_level = dist.read_text("top_level.txt")
+        except OSError:
+            top_level = None
         if top_level:
             for line in top_level.strip().splitlines():
                 entry = line.strip()
@@ -409,6 +412,26 @@ def _find_readme(package_name: str, package_path: Path | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _safe_rglob(root: Path, pattern: str) -> list[Path]:
+    """Like ``sorted(root.rglob(pattern))`` but tolerant of permission errors.
+
+    Collects as many matching files as possible before the first
+    inaccessible directory terminates the generator.
+    """
+    results: list[Path] = []
+    try:
+        for path in root.rglob(pattern):
+            results.append(path)
+    except PermissionError:
+        logger.warning(
+            "Permission denied while traversing '%s'; "
+            "some modules may be missing",
+            root,
+        )
+    results.sort()
+    return results
+
+
 def _is_safe_source_file(file_path: Path, root: Path) -> bool:
     """Check that a source file is safe to read.
 
@@ -521,7 +544,7 @@ def _walk_package(
     # key = relative path without extension -> (py_path, pyi_path, stub_source)
     file_map: dict[str, tuple[Path | None, Path | None, str]] = {}
 
-    for py_file in sorted(package_path.rglob("*.py")):
+    for py_file in _safe_rglob(package_path, "*.py"):
         if not _is_safe_source_file(py_file, package_path):
             continue
         relative = py_file.relative_to(package_path)
@@ -532,7 +555,7 @@ def _walk_package(
         file_map[key] = (py_file, None, "")
 
     # Colocated .pyi files
-    for pyi_file in sorted(package_path.rglob("*.pyi")):
+    for pyi_file in _safe_rglob(package_path, "*.pyi"):
         if not _is_safe_source_file(pyi_file, package_path):
             continue
         relative = pyi_file.relative_to(package_path)
@@ -545,7 +568,7 @@ def _walk_package(
 
     # Standalone stub .pyi files
     if stub_path is not None:
-        for pyi_file in sorted(stub_path.rglob("*.pyi")):
+        for pyi_file in _safe_rglob(stub_path, "*.pyi"):
             if not _is_safe_source_file(pyi_file, stub_path):
                 continue
             relative = pyi_file.relative_to(stub_path)

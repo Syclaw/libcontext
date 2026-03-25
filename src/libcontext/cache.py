@@ -128,8 +128,12 @@ def load(
     """
     cache_file = _get_cache_dir() / _cache_filename(package_name, version, env_tag)
 
-    if not cache_file.is_file():
-        logger.debug("Cache miss for %r: file not found", package_name)
+    try:
+        if not cache_file.is_file():
+            logger.debug("Cache miss for %r: file not found", package_name)
+            return None
+    except OSError:
+        logger.debug("Cache miss for %r: cannot access cache dir", package_name)
         return None
 
     try:
@@ -252,7 +256,11 @@ def clear_all() -> int:
     """
     cache_dir = _get_cache_dir()
     count = 0
-    for f in cache_dir.glob("*.json"):
+    try:
+        entries = list(cache_dir.glob("*.json"))
+    except OSError:
+        return 0
+    for f in entries:
         _safe_delete(f)
         count += 1
     return count
