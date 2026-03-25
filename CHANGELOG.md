@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-25
+
+### Added
+
+- **Universal venv auto-detection**: environment variable detection chain
+  (`VIRTUAL_ENV` → `CONDA_PREFIX` → `UV_PROJECT_ENVIRONMENT`) with fallback
+  to `.venv/`/`venv/` directory scan and `uv python find` query. Works for
+  virtualenv, conda, poetry, pdm, and uv users out of the box.
+
+### Fixed
+
+- **`Package not found` for globally-installed tool**: `libctx inspect` now
+  correctly discovers packages from project environments when installed via
+  `uv tool install` or `pipx`.
+- **Permission-denied crashes on file traversal**: `rglob()` generators that
+  hit `PermissionError` no longer abort collection; partial results are
+  preserved via incremental `_safe_rglob()` helper.
+- **Cache directory access errors**: `cache load` and `cache clear` handle
+  `OSError` on cache directory access gracefully.
+
+### Changed
+
+- **Search refactoring**: duplicated traversal logic between `search_package()`
+  and `search_package_structured()` extracted into shared `_collect_search_hits()`
+  helper (~150 lines removed).
+- **Single-pass file discovery**: `_walk_package()` and `_compute_source_stats()`
+  now use a single `rglob("*.py*")` pass instead of two separate traversals.
+- **Single-pass variable categorisation**: `render_module()` classifies variables
+  into aliases, constants, and module vars in one loop instead of three.
+- **Cache eviction**: replaced O(n) `pop(0)` loop with slice deletion.
+- Cleaned up broad `except` clauses and moved late imports to module level in
+  `renderer.py`.
+- Added missing `Raises:` docstring sections to public functions across
+  `inspector.py`, `config.py`, `_envsetup.py`, and `mcp_server.py`.
+
 ## [0.6.1] - 2026-03-25
 
 ### Fixed
@@ -108,7 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Free-form `extra_context` field for library authors.
 - Python API for programmatic usage (`collect_package`, `render_package`).
 
-[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Syclaw/libcontext/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Syclaw/libcontext/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Syclaw/libcontext/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Syclaw/libcontext/compare/v0.4.0...v0.5.0
