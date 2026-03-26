@@ -336,3 +336,137 @@ def test_from_dict_negative_max_readme_lines() -> None:
     """Negative max_readme_lines raises ConfigError."""
     with pytest.raises(ConfigError, match="non-negative"):
         LibcontextConfig.from_dict({"max_readme_lines": -1})
+
+
+# ---------------------------------------------------------------------------
+# New config fields: file_size_limit, output_char_limit, subprocess_timeout
+# ---------------------------------------------------------------------------
+
+
+def test_from_dict_new_fields_specified() -> None:
+    """All three new fields are populated from a dictionary."""
+    data = {
+        "file_size_limit": 5_000_000,
+        "output_char_limit": 120_000,
+        "subprocess_timeout": 30,
+    }
+
+    cfg = LibcontextConfig.from_dict(data)
+
+    assert cfg.file_size_limit == 5_000_000
+    assert cfg.output_char_limit == 120_000
+    assert cfg.subprocess_timeout == 30
+
+
+def test_from_dict_new_fields_defaults() -> None:
+    """New fields use correct defaults when omitted."""
+    cfg = LibcontextConfig.from_dict({})
+
+    assert cfg.file_size_limit == 10 * 1024 * 1024
+    assert cfg.output_char_limit == 0
+    assert cfg.subprocess_timeout == 10
+
+
+# --- file_size_limit validation ---
+
+
+def test_from_dict_file_size_limit_non_int() -> None:
+    """file_size_limit as a string raises ConfigError."""
+    with pytest.raises(ConfigError, match="file_size_limit must be an integer"):
+        LibcontextConfig.from_dict({"file_size_limit": "big"})
+
+
+def test_from_dict_file_size_limit_bool_rejected() -> None:
+    """file_size_limit as a bool is rejected."""
+    with pytest.raises(ConfigError, match="file_size_limit must be an integer"):
+        LibcontextConfig.from_dict({"file_size_limit": True})
+
+
+def test_from_dict_file_size_limit_zero() -> None:
+    """file_size_limit of zero raises ConfigError (must be positive)."""
+    with pytest.raises(ConfigError, match="file_size_limit must be positive"):
+        LibcontextConfig.from_dict({"file_size_limit": 0})
+
+
+def test_from_dict_file_size_limit_negative() -> None:
+    """Negative file_size_limit raises ConfigError."""
+    with pytest.raises(ConfigError, match="file_size_limit must be positive"):
+        LibcontextConfig.from_dict({"file_size_limit": -1})
+
+
+# --- output_char_limit validation ---
+
+
+def test_from_dict_output_char_limit_non_int() -> None:
+    """output_char_limit as a float raises ConfigError."""
+    with pytest.raises(ConfigError, match="output_char_limit must be an integer"):
+        LibcontextConfig.from_dict({"output_char_limit": 1.5})
+
+
+def test_from_dict_output_char_limit_bool_rejected() -> None:
+    """output_char_limit as a bool is rejected."""
+    with pytest.raises(ConfigError, match="output_char_limit must be an integer"):
+        LibcontextConfig.from_dict({"output_char_limit": False})
+
+
+def test_from_dict_output_char_limit_negative() -> None:
+    """Negative output_char_limit raises ConfigError."""
+    with pytest.raises(ConfigError, match="output_char_limit must be non-negative"):
+        LibcontextConfig.from_dict({"output_char_limit": -10})
+
+
+def test_from_dict_output_char_limit_zero_allowed() -> None:
+    """output_char_limit of zero is valid (means unlimited)."""
+    cfg = LibcontextConfig.from_dict({"output_char_limit": 0})
+
+    assert cfg.output_char_limit == 0
+
+
+# --- subprocess_timeout validation ---
+
+
+def test_from_dict_subprocess_timeout_non_int() -> None:
+    """subprocess_timeout as a string raises ConfigError."""
+    with pytest.raises(ConfigError, match="subprocess_timeout must be an integer"):
+        LibcontextConfig.from_dict({"subprocess_timeout": "fast"})
+
+
+def test_from_dict_subprocess_timeout_bool_rejected() -> None:
+    """subprocess_timeout as a bool is rejected."""
+    with pytest.raises(ConfigError, match="subprocess_timeout must be an integer"):
+        LibcontextConfig.from_dict({"subprocess_timeout": True})
+
+
+def test_from_dict_subprocess_timeout_zero() -> None:
+    """subprocess_timeout of zero raises ConfigError (must be positive)."""
+    with pytest.raises(ConfigError, match="subprocess_timeout must be positive"):
+        LibcontextConfig.from_dict({"subprocess_timeout": 0})
+
+
+def test_from_dict_subprocess_timeout_negative() -> None:
+    """Negative subprocess_timeout raises ConfigError."""
+    with pytest.raises(ConfigError, match="subprocess_timeout must be positive"):
+        LibcontextConfig.from_dict({"subprocess_timeout": -5})
+
+
+# --- pyproject.toml integration with new fields ---
+
+
+def test_read_config_with_new_fields(tmp_path: Path) -> None:
+    """Reads new fields from [tool.libcontext] in pyproject.toml."""
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        textwrap.dedent("""\
+        [tool.libcontext]
+        file_size_limit = 2000000
+        output_char_limit = 50000
+        subprocess_timeout = 20
+        """),
+        encoding="utf-8",
+    )
+
+    cfg = read_config_from_pyproject(pyproject)
+
+    assert cfg.file_size_limit == 2_000_000
+    assert cfg.output_char_limit == 50_000
+    assert cfg.subprocess_timeout == 20

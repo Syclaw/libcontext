@@ -1123,3 +1123,383 @@ def test_walk_package_single_file_pyi_fails_py_used(tmp_path: Path):
     assert len(modules) == 1
     assert modules[0].stub_source == ""
     assert modules[0].functions[0].docstring == "Doc."
+
+
+# ---------------------------------------------------------------------------
+# _is_safe_source_file with custom file_size_limit
+# ---------------------------------------------------------------------------
+
+
+def test_is_safe_source_file_custom_limit_rejects(tmp_path: Path):
+    """Custom file_size_limit rejects a file exceeding the custom threshold."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    f = pkg / "mod.py"
+    f.write_bytes(b"x" * 500)
+
+    assert _is_safe_source_file(f, pkg, file_size_limit=100) is False
+
+
+def test_is_safe_source_file_custom_limit_accepts(tmp_path: Path):
+    """Custom file_size_limit accepts a file within the custom threshold."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    f = pkg / "mod.py"
+    f.write_bytes(b"x" * 50)
+
+    assert _is_safe_source_file(f, pkg, file_size_limit=100) is True
+
+
+def test_is_safe_source_file_zero_limit_uses_default(tmp_path: Path):
+    """file_size_limit=0 falls back to the default MAX_SOURCE_FILE_BYTES."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    small = pkg / "small.py"
+    small.write_text("x = 1", encoding="utf-8")
+
+    assert _is_safe_source_file(small, pkg, file_size_limit=0) is True
+
+
+# ---------------------------------------------------------------------------
+# _find_stub_package (importlib.metadata-based)
+# ---------------------------------------------------------------------------
+
+_FIND_STUB_DISTS_PATH = "libcontext.collector.importlib.metadata.distributions"
+
+
+def _make_stub_dist(
+    name: str,
+    *,
+    files: list[str] | None = None,
+    locate_base: str = "/fake/site-packages",
+) -> MagicMock:
+    """Build a mock distribution for _find_stub_package tests."""
+    dist = MagicMock()
+    dist.metadata = {"Name": name}
+    if files is not None:
+        mock_files = []
+        for f in files:
+            mock_file = MagicMock()
+            mock_file.__str__ = MagicMock(return_value=f)
+            mock_file.parts = tuple(f.split("/"))
+            mock_files.append(mock_file)
+        dist.files = mock_files
+    else:
+        dist.files = None
+    dist.locate_file = MagicMock(side_effect=lambda p: Path(locate_base) / p)
+    return dist
+
+
+def test_find_stub_package_name_stubs_pattern(tmp_path: Path) -> None:
+    """Finds a <name>-stubs distribution via dist.files containing .pyi."""
+    from libcontext.collector import _find_stub_package
+
+    stubs_dir = tmp_path / "mylib-stubs"
+    stubs_dir.mkdir()
+
+    dist = _make_stub_dist(
+        "mylib-stubs",
+        files=["mylib-stubs/__init__.pyi"],
+        locate_base=str(tmp_path),
+    )
+    with patch(_FIND_STUB_DISTS_PATH, return_value=[dist]):
+        result = _find_stub_package("mylib")
+
+    assert result == stubs_dir
+
+
+def test_find_stub_package_types_pattern(tmp_path: Path) -> None:
+    """Finds a types-<name> distribution."""
+    from libcontext.collector import _find_stub_package
+
+    stubs_dir = tmp_path / "mylib-stubs"
+    stubs_dir.mkdir()
+
+    dist = _make_stub_dist(
+        "types-mylib",
+        files=["mylib-stubs/__init__.pyi"],
+        locate_base=str(tmp_path),
+    )
+    with patch(_FIND_STUB_DISTS_PATH, return_value=[dist]):
+        result = _find_stub_package("mylib")
+
+    assert result == stubs_dir
+
+
+def test_find_stub_package_prefers_name_stubs_over_types(tmp_path: Path) -> None:
+    """<name>-stubs has higher priority than types-<name>."""
+    from libcontext.collector import _find_stub_package
+
+    stubs_dir = tmp_path / "mylib-stubs"
+    stubs_dir.mkdir()
+
+    dist_stubs = _make_stub_dist(
+        "mylib-stubs",
+        files=["mylib-stubs/__init__.pyi"],
+        locate_base=str(tmp_path),
+    )
+    dist_types = _make_stub_dist(
+        "types-mylib",
+        files=["types-mylib/__init__.pyi"],
+        locate_base=str(tmp_path),
+    )
+    with patch(_FIND_STUB_DISTS_PATH, return_value=[dist_types, dist_stubs]):
+        result = _find_stub_package("mylib")
+
+    assert result == stubs_dir
+
+
+def test_find_stub_package_none_when_no_match() -> None:
+    """Returns None when no stub distribution is installed."""
+    from libcontext.collector import _find_stub_package
+
+    dist = _make_stub_dist("unrelated-pkg", files=["unrelated/__init__.py"])
+    with patch(_FIND_STUB_DISTS_PATH, return_value=[dist]):
+        result = _find_stub_package("mylib")
+
+    assert result is None
+
+
+def test_find_stub_package_fallback_convention_path(tmp_path: Path) -> None:
+    """Falls back to convention-based <name>-stubs dir when dist.files has no .pyi."""
+    from libcontext.collector import _find_stub_package
+
+    stubs_dir = tmp_path / "mylib-stubs"
+    stubs_dir.mkdir()
+
+    dist = _make_stub_dist(
+        "mylib-stubs",
+        files=["mylib-stubs/something.txt"],
+        locate_base=str(tmp_path),
+    )
+    # locate_file("") returns the base -> site-packages equivalent
+    dist.locate_file = MagicMock(
+        side_effect=lambda p: Path(str(tmp_path)) / p if p else Path(str(tmp_path))
+    )
+    with patch(_FIND_STUB_DISTS_PATH, return_value=[dist]):
+        result = _find_stub_package("mylib")
+
+    assert result == stubs_dir
+
+
+# ---------------------------------------------------------------------------
+# _find_stub_package_fs (filesystem-based)
+# ---------------------------------------------------------------------------
+
+
+def test_find_stub_package_fs_finds_stubs_dir(tmp_path: Path) -> None:
+    """Discovers <name>-stubs directory next to the package directory."""
+    from libcontext.collector import _find_stub_package_fs
+
+    site = tmp_path / "site-packages"
+    pkg = site / "mylib"
+    pkg.mkdir(parents=True)
+    stubs = site / "mylib-stubs"
+    stubs.mkdir()
+
+    result = _find_stub_package_fs("mylib", pkg)
+
+    assert result == stubs
+
+
+def test_find_stub_package_fs_normalizes_name(tmp_path: Path) -> None:
+    """Finds stubs when the package name contains hyphens."""
+    from libcontext.collector import _find_stub_package_fs
+
+    site = tmp_path / "site-packages"
+    pkg = site / "my_lib"
+    pkg.mkdir(parents=True)
+    stubs = site / "my_lib-stubs"
+    stubs.mkdir()
+
+    result = _find_stub_package_fs("my-lib", pkg)
+
+    assert result == stubs
+
+
+def test_find_stub_package_fs_returns_none_when_absent(tmp_path: Path) -> None:
+    """Returns None when no stub directory exists."""
+    from libcontext.collector import _find_stub_package_fs
+
+    site = tmp_path / "site-packages"
+    pkg = site / "mylib"
+    pkg.mkdir(parents=True)
+
+    result = _find_stub_package_fs("mylib", pkg)
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_via_target (subprocess-based discovery)
+# ---------------------------------------------------------------------------
+
+_QUERY_TARGET_PATH = "libcontext._envsetup.query_target_package"
+
+
+def test_resolve_via_target_returns_path_and_metadata(tmp_path: Path) -> None:
+    """Successful resolution returns pkg_path, metadata dict, and stub_path."""
+    from libcontext.collector import _resolve_via_target
+
+    pkg_dir = tmp_path / "mypkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    query_result = {
+        "path": str(pkg_dir),
+        "version": "1.2.3",
+        "summary": "A library",
+        "installed": ["mypkg", "other"],
+    }
+    with patch(_QUERY_TARGET_PATH, return_value=query_result):
+        pkg_path, metadata, _stub_path = _resolve_via_target(
+            "mypkg", Path("/usr/bin/python3")
+        )
+
+    assert pkg_path == pkg_dir
+    assert metadata["version"] == "1.2.3"
+    assert metadata["summary"] == "A library"
+
+
+def test_resolve_via_target_raises_when_path_none() -> None:
+    """Raises PackageNotFoundError when the target reports no path."""
+    from libcontext.collector import _resolve_via_target
+
+    query_result = {
+        "path": None,
+        "installed": ["click", "flask"],
+    }
+    with (
+        patch(_QUERY_TARGET_PATH, return_value=query_result),
+        pytest.raises(PackageNotFoundError),
+    ):
+        _resolve_via_target("nonexistent", Path("/usr/bin/python3"))
+
+
+def test_resolve_via_target_passes_timeout() -> None:
+    """subprocess_timeout > 0 is forwarded to query_target_package."""
+    from libcontext.collector import _resolve_via_target
+
+    pkg_dir = Path("/fake/mypkg")
+    query_result = {
+        "path": str(pkg_dir),
+        "version": "0.1.0",
+        "summary": None,
+        "installed": [],
+    }
+    with patch(_QUERY_TARGET_PATH, return_value=query_result) as mock_query:
+        _resolve_via_target(
+            "mypkg", Path("/usr/bin/python3"), subprocess_timeout=30
+        )
+
+    mock_query.assert_called_once_with(
+        Path("/usr/bin/python3"), "mypkg", timeout=30
+    )
+
+
+def test_resolve_via_target_zero_timeout_omits_kwarg() -> None:
+    """subprocess_timeout=0 does not pass timeout kwarg."""
+    from libcontext.collector import _resolve_via_target
+
+    pkg_dir = Path("/fake/mypkg")
+    query_result = {
+        "path": str(pkg_dir),
+        "version": "1.0.0",
+        "summary": None,
+        "installed": [],
+    }
+    with patch(_QUERY_TARGET_PATH, return_value=query_result) as mock_query:
+        _resolve_via_target("mypkg", Path("/usr/bin/python3"), subprocess_timeout=0)
+
+    mock_query.assert_called_once_with(Path("/usr/bin/python3"), "mypkg")
+
+
+def test_resolve_via_target_discovers_stubs(tmp_path: Path) -> None:
+    """Stub directory next to the package is returned as stub_path."""
+    from libcontext.collector import _resolve_via_target
+
+    site = tmp_path / "site-packages"
+    pkg_dir = site / "mypkg"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+    stubs = site / "mypkg-stubs"
+    stubs.mkdir()
+
+    query_result = {
+        "path": str(pkg_dir),
+        "version": "2.0.0",
+        "summary": None,
+        "installed": [],
+    }
+    with patch(_QUERY_TARGET_PATH, return_value=query_result):
+        _, _, stub_path = _resolve_via_target("mypkg", Path("/usr/bin/python3"))
+
+    assert stub_path == stubs
+
+
+def test_resolve_via_target_compiled_uses_stubs_as_primary(tmp_path: Path) -> None:
+    """Compiled extension with stubs: stubs become the primary pkg_path."""
+    from libcontext.collector import _resolve_via_target
+
+    site = tmp_path / "site-packages"
+    # A directory without __init__.py is treated as compiled extension
+    pkg_dir = site / "mypkg"
+    pkg_dir.mkdir(parents=True)
+    stubs = site / "mypkg-stubs"
+    stubs.mkdir()
+
+    query_result = {
+        "path": str(pkg_dir),
+        "version": "3.0.0",
+        "summary": None,
+        "installed": [],
+    }
+    with patch(_QUERY_TARGET_PATH, return_value=query_result):
+        pkg_path, _, stub_path = _resolve_via_target(
+            "mypkg", Path("/usr/bin/python3")
+        )
+
+    assert pkg_path == stubs
+    assert stub_path is None
+
+
+# ---------------------------------------------------------------------------
+# collect_package with config_override having custom file_size_limit
+# ---------------------------------------------------------------------------
+
+
+def test_collect_package_respects_custom_file_size_limit(tmp_path: Path) -> None:
+    """Modules exceeding config file_size_limit are excluded from collection."""
+    pkg = tmp_path / "sizepkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Root."""', encoding="utf-8")
+    (pkg / "small.py").write_text(
+        'def small() -> None:\n    """Small."""\n    ...\n',
+        encoding="utf-8",
+    )
+    big = pkg / "big.py"
+    big.write_bytes(b'"""Big."""\n' + b"x" * 500)
+
+    config = LibcontextConfig(file_size_limit=200)
+    info = collect_package(str(pkg), include_readme=False, config_override=config)
+
+    names = [m.name for m in info.modules]
+    assert "sizepkg.small" in names
+    assert "sizepkg.big" not in names
+
+
+def test_collect_default_limit_includes_normal(tmp_path: Path) -> None:
+    """Default file_size_limit does not exclude normal-sized modules."""
+    pkg = tmp_path / "normpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Root."""', encoding="utf-8")
+    (pkg / "mod.py").write_text(
+        'def func() -> None:\n    """Normal."""\n    ...\n',
+        encoding="utf-8",
+    )
+
+    config = LibcontextConfig()
+    info = collect_package(str(pkg), include_readme=False, config_override=config)
+
+    names = [m.name for m in info.modules]
+    assert "normpkg.mod" in names

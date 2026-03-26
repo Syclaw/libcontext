@@ -183,3 +183,124 @@ class TestSearchParity:
             mcp_result = mcp_server.search_api(str(parity_package), "nonexistent")
 
         assert cli_result == mcp_result.strip()
+
+
+class TestJsonFormatParity:
+    """CLI --format json and MCP get_api_json produce equivalent JSON envelopes."""
+
+    def test_full_package_json(
+        self, parity_package: Path, collected_package: PackageInfo
+    ) -> None:
+        import json
+
+        cli_result = _cli_output(
+            [str(parity_package), "--format", "json"],
+        )
+
+        with _mcp_with_package(collected_package):
+            mcp_result = mcp_server.get_api_json(str(parity_package))
+
+        cli_data = json.loads(cli_result)
+        mcp_data = json.loads(mcp_result)
+        assert cli_data == mcp_data
+
+    def test_single_module_json(
+        self, parity_package: Path, collected_package: PackageInfo
+    ) -> None:
+        import json
+
+        module_name = "paritypkg.core"
+        cli_result = _cli_output(
+            [str(parity_package), "--format", "json", "--module", module_name],
+        )
+
+        with _mcp_with_package(collected_package):
+            mcp_result = mcp_server.get_api_json(str(parity_package), module_name)
+
+        cli_data = json.loads(cli_result)
+        mcp_data = json.loads(mcp_result)
+        assert cli_data == mcp_data
+
+
+class TestTypeFilteredSearchParity:
+    """CLI --search --type and MCP search_api(kind=) produce equivalent output."""
+
+    def test_class_filter(
+        self, parity_package: Path, collected_package: PackageInfo
+    ) -> None:
+        cli_result = _cli_output(
+            [str(parity_package), "--search", "Engine", "--type", "class"],
+        )
+
+        with _mcp_with_package(collected_package):
+            mcp_result = mcp_server.search_api(
+                str(parity_package), "Engine", kind="class"
+            )
+
+        assert cli_result == mcp_result.strip()
+
+    def test_function_filter(
+        self, parity_package: Path, collected_package: PackageInfo
+    ) -> None:
+        cli_result = _cli_output(
+            [str(parity_package), "--search", "create", "--type", "function"],
+        )
+
+        with _mcp_with_package(collected_package):
+            mcp_result = mcp_server.search_api(
+                str(parity_package), "create", kind="function"
+            )
+
+        assert cli_result == mcp_result.strip()
+
+    def test_filter_excludes_non_matching_kind(
+        self, parity_package: Path, collected_package: PackageInfo
+    ) -> None:
+        cli_result = _cli_output(
+            [str(parity_package), "--search", "Engine", "--type", "function"],
+        )
+
+        with _mcp_with_package(collected_package):
+            mcp_result = mcp_server.search_api(
+                str(parity_package), "Engine", kind="function"
+            )
+
+        assert cli_result == mcp_result.strip()
+
+
+class TestErrorParity:
+    """CLI and MCP both handle nonexistent packages gracefully."""
+
+    def test_cli_nonexistent_package_exits_nonzero(self, tmp_path: Path) -> None:
+        fake_pkg = str(tmp_path / "no_such_pkg_xyz")
+        runner = CliRunner()
+
+        result = runner.invoke(main, ["inspect", fake_pkg, "-q"])
+
+        assert result.exit_code != 0
+        assert "Error" in (result.output + (result.stderr or ""))
+
+    def test_mcp_nonexistent_package_returns_error_string(self) -> None:
+        result = mcp_server.get_package_overview("no_such_pkg_xyz_999")
+
+        assert result.startswith("Error:")
+
+    def test_mcp_get_api_json_nonexistent_returns_error(self) -> None:
+        result = mcp_server.get_api_json("no_such_pkg_xyz_999")
+
+        assert result.startswith("Error:")
+
+    def test_mcp_search_nonexistent_returns_error(self) -> None:
+        result = mcp_server.search_api("no_such_pkg_xyz_999", "anything")
+
+        assert result.startswith("Error:")
+
+    def test_mcp_nonexistent_module_in_valid_package(
+        self, parity_package: Path, collected_package: PackageInfo
+    ) -> None:
+        with _mcp_with_package(collected_package):
+            result = mcp_server.get_module_api(
+                str(parity_package), "paritypkg.nonexistent"
+            )
+
+        assert "not found" in result
