@@ -164,11 +164,11 @@ def _find_stub_package(package_name: str) -> Path | None:
         if dist.files:
             for f in dist.files:
                 if str(f).endswith(".pyi"):
-                    stub_root = Path(dist.locate_file(f.parts[0]))
+                    stub_root = Path(str(dist.locate_file(f.parts[0])))
                     if stub_root.is_dir():
                         return stub_root
         # Fallback: convention-based path
-        site_packages = Path(dist.locate_file(""))
+        site_packages = Path(str(dist.locate_file("")))
         for suffix in (f"{package_name}-stubs", f"{norm_name}-stubs"):
             candidate = site_packages / suffix
             if candidate.is_dir():
@@ -357,8 +357,8 @@ def _get_package_metadata(package_name: str) -> dict[str, str | None]:
     try:
         meta = importlib.metadata.metadata(package_name)
         return {
-            "version": meta.get("Version"),
-            "summary": meta.get("Summary"),
+            "version": meta.get("Version"),  # type: ignore[attr-defined]
+            "summary": meta.get("Summary"),  # type: ignore[attr-defined]
         }
     except importlib.metadata.PackageNotFoundError:
         logger.debug("No installed metadata for '%s'", package_name)
@@ -380,7 +380,7 @@ def _find_readme(package_name: str, package_path: Path | None) -> str | None:
     # 1. Metadata long description
     try:
         meta = importlib.metadata.metadata(package_name)
-        body = meta.get_payload()  # type: ignore[union-attr]
+        body = meta.get_payload()  # type: ignore[attr-defined]
         if isinstance(body, str) and body.strip():
             logger.debug("README found via metadata for '%s'", package_name)
             return body.strip()

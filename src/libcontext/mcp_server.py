@@ -106,7 +106,7 @@ def _coerce_to_package(data: dict[str, object]) -> PackageInfo:
         pkg_name = module_name.split(".")[0] if "." in module_name else module_name
         return PackageInfo(
             name=pkg_name,
-            modules=[ModuleInfo.from_dict(data)],  # type: ignore[arg-type]
+            modules=[ModuleInfo.from_dict(data)],
         )
     return PackageInfo.from_dict(data)
 
