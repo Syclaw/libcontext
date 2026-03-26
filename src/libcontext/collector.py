@@ -641,6 +641,34 @@ def _walk_package(
 # ---------------------------------------------------------------------------
 
 
+def _find_stub_package_fs(package_name: str, pkg_path: Path) -> Path | None:
+    """Find a stub package via the filesystem, without importlib.metadata.
+
+    Derives the site-packages directory from *pkg_path* (its parent) and
+    checks for ``<name>-stubs/`` or ``<norm_name>-stubs/`` directories.
+    This works correctly in cross-venv scenarios where the tool process
+    cannot see the target's installed distributions.
+
+    Args:
+        package_name: The importable package name (e.g. ``openai``).
+        pkg_path: Resolved path to the package source directory.
+
+    Returns:
+        Path to the stub package directory, or ``None`` if not found.
+    """
+    norm_name = package_name.replace("-", "_").lower()
+    site_packages = pkg_path.parent
+
+    # Check in priority order: <name>-stubs, <norm_name>-stubs
+    for suffix in (f"{package_name}-stubs", f"{norm_name}-stubs"):
+        candidate = site_packages / suffix
+        if candidate.is_dir():
+            logger.debug("Found stub package at '%s'", candidate)
+            return candidate
+
+    return None
+
+
 def _resolve_via_target(
     package_name: str,
     python_exe: Path,
@@ -682,10 +710,13 @@ def _resolve_via_target(
         "summary": data.get("summary"),  # type: ignore[dict-item]
     }
 
-    # Check for compiled extension and stubs
-    stub_path: Path | None = None
+    # Check for compiled extension and stubs.
+    # Use filesystem-based detection: the target's site-packages is the
+    # parent of pkg_path, so we look for <name>-stubs/ there directly.
+    # This avoids using the tool's importlib.metadata which cannot see
+    # packages installed only in the target venv.
+    stub_path = _find_stub_package_fs(package_name, pkg_path)
     if _is_compiled_extension(pkg_path):
-        stub_path = _find_stub_package(package_name)
         if stub_path:
             pkg_path = stub_path
             stub_path = None
@@ -693,14 +724,12 @@ def _resolve_via_target(
                 "Package '%s' has no Python source; using stubs as primary",
                 package_name,
             )
-    else:
-        stub_path = _find_stub_package(package_name)
-        if stub_path:
-            logger.info(
-                "Stub package discovered for '%s' at %s",
-                package_name,
-                stub_path,
-            )
+    elif stub_path:
+        logger.info(
+            "Stub package discovered for '%s' at %s",
+            package_name,
+            stub_path,
+        )
 
     return pkg_path, metadata, stub_path
 
