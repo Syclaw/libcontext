@@ -18,8 +18,6 @@ Requires the ``mcp`` optional dependency::
     pip install libcontext[mcp]
 """
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -68,6 +66,14 @@ _CACHE_SIZE = 32
 # Set by main() at startup; used by _collect_cached for cache/discovery.
 _active_env_tag: str | None = None
 _active_target_python: Path | None = None
+_output_char_limit: int = 0  # 0 = use default from _security.py
+
+
+def _truncate(text: str) -> str:
+    """Truncate text using the configured output character limit."""
+    if _output_char_limit > 0:
+        return truncate_output(text, limit=_output_char_limit)
+    return truncate_output(text)
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
@@ -132,7 +138,7 @@ def get_package_overview(package_name: str) -> str:
     except PackageNotFoundError as exc:
         return f"Error: {exc}"
 
-    return truncate_output(render_package_overview(pkg))
+    return _truncate(render_package_overview(pkg))
 
 
 @mcp.tool()
@@ -155,7 +161,7 @@ def get_module_api(package_name: str, module_name: str) -> str:
 
     for mod in pkg.non_empty_modules:
         if mod.name == module_name:
-            return truncate_output(render_module(mod))
+            return _truncate(render_module(mod))
 
     available = [m.name for m in pkg.non_empty_modules]
     return (
@@ -194,8 +200,8 @@ def search_api(
             results = search_package_structured(pkg, query, kind=kind)
             data = {"query": query, "package": package_name, "results": results}
             envelope = _serialize_envelope(data)
-            return truncate_output(json.dumps(envelope, indent=2))
-        return truncate_output(search_package(pkg, query, kind=kind))
+            return _truncate(json.dumps(envelope, indent=2))
+        return _truncate(search_package(pkg, query, kind=kind))
     except ValueError as exc:
         return f"Error: {exc}"
 
@@ -224,7 +230,7 @@ def get_api_json(
         for mod in pkg.non_empty_modules:
             if mod.name == module_name:
                 envelope = _serialize_envelope(dataclasses.asdict(mod))
-                return truncate_output(json.dumps(envelope, indent=2))
+                return _truncate(json.dumps(envelope, indent=2))
         available = [m.name for m in pkg.non_empty_modules]
         return (
             f"Module '{module_name}' not found in {package_name}.\n"
@@ -232,7 +238,7 @@ def get_api_json(
         )
 
     envelope = _serialize_envelope(dataclasses.asdict(pkg))
-    return truncate_output(json.dumps(envelope, indent=2))
+    return _truncate(json.dumps(envelope, indent=2))
 
 
 @mcp.tool()
@@ -275,8 +281,8 @@ def diff_api(old_json: str, new_json: str, output_format: str = "markdown") -> s
 
     if output_format == "json":
         envelope = _serialize_envelope(dataclasses.asdict(result))
-        return truncate_output(json.dumps(envelope, indent=2))
-    return truncate_output(render_diff(result))
+        return _truncate(json.dumps(envelope, indent=2))
+    return _truncate(render_diff(result))
 
 
 @mcp.tool()
@@ -320,7 +326,11 @@ def main() -> None:
     elif os.environ.get("LIBCONTEXT_PYTHON"):
         python_env = os.environ["LIBCONTEXT_PYTHON"]
 
-    global _active_env_tag, _active_target_python
+    global _active_env_tag, _active_target_python, _output_char_limit
+
+    limit_str = os.environ.get("LIBCONTEXT_OUTPUT_CHAR_LIMIT", "")
+    if limit_str.isdigit():
+        _output_char_limit = int(limit_str)
 
     from ._envsetup import setup_environment
 

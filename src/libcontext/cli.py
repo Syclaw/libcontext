@@ -32,8 +32,6 @@ Usage examples::
     libctx cache clear requests
 """
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -218,7 +216,16 @@ def inspect(
     quiet: bool,
     verbose: bool,
 ) -> None:
-    """Generate LLM context for one or more Python packages."""
+    r"""Generate LLM context for one or more Python packages.
+
+    \b
+    Examples:
+      libctx inspect requests                    # full API reference
+      libctx inspect requests --overview -q      # structural map
+      libctx inspect requests -m requests.api -q # single module
+      libctx inspect requests --search Session   # search by name
+      libctx inspect flask --format json -o api.json
+    """
     # Configure logging
     if verbose:
         logging.basicConfig(
@@ -846,7 +853,13 @@ def _format_age(iso_timestamp: str) -> str:
     help="Output format.",
 )
 def diff(old_file: Path, new_file: Path, output_format: str) -> None:
-    """Compare two API snapshots and show what changed."""
+    r"""Compare two API snapshots and show what changed.
+
+    \b
+    Examples:
+      libctx diff old.json new.json              # markdown diff
+      libctx diff old.json new.json --format json
+    """
     from ._security import MAX_JSON_INPUT_BYTES
 
     for label, path in (("old_file", old_file), ("new_file", new_file)):
