@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "libcontext"
-version = "0.7.5"
+version = "0.8.0"
 description = "Generate optimized LLM context from Python library APIs — CLI, skill, and MCP server"
 readme = "README.md"
 license = "MIT"
@@ -15,7 +15,7 @@ authors = [
 urls = { Homepage = "https://github.com/Syclaw/libcontext", Repository = "https://github.com/Syclaw/libcontext", Issues = "https://github.com/Syclaw/libcontext/issues" }
 keywords = ["copilot", "context", "documentation", "ast", "introspection", "mcp", "llm"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

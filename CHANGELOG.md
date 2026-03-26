@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-26
+
+### Breaking Changes
+
+- Dropped Python 3.9 support. Minimum required version is now 3.10.
+
+### Added
+
+- Configurable `file_size_limit`, `output_char_limit`, and `subprocess_timeout`
+  in `[tool.libcontext]` configuration section.
+- CLI output now respects `output_char_limit` for consistency with MCP server.
+- CI enforces minimum 90% code coverage via `--cov-fail-under`.
+
+### Changed
+
+- Development status upgraded from Alpha to Beta.
+- CI matrix updated to test Python 3.10-3.13 only.
+- Enabled `warn_unused_ignores` in mypy configuration; removed stale
+  `type: ignore` comments.
+- Test coverage raised from 93% to 95% (54 new tests).
+
 ## [0.7.0] - 2026-03-25
 
 ### Added
@@ -143,7 +164,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Free-form `extra_context` field for library authors.
 - Python API for programmatic usage (`collect_package`, `render_package`).
 
-[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Syclaw/libcontext/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Syclaw/libcontext/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Syclaw/libcontext/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Syclaw/libcontext/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Syclaw/libcontext/compare/v0.5.0...v0.6.0
