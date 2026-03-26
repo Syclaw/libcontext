@@ -637,6 +637,75 @@ def _walk_package(
 
 
 # ---------------------------------------------------------------------------
+# Subprocess-based package discovery
+# ---------------------------------------------------------------------------
+
+
+def _resolve_via_target(
+    package_name: str,
+    python_exe: Path,
+) -> tuple[Path, dict[str, str | None], Path | None]:
+    """Discover a package by querying the target interpreter.
+
+    Delegates ``importlib.util.find_spec`` and metadata retrieval to
+    *python_exe* via subprocess, avoiding cross-version contamination.
+
+    Args:
+        package_name: The importable package name.
+        python_exe: Path to the target Python interpreter.
+
+    Returns:
+        A ``(pkg_path, metadata, stub_path)`` tuple.
+
+    Raises:
+        PackageNotFoundError: If the package is not found in the target.
+    """
+    from ._envsetup import query_target_package
+
+    data = query_target_package(python_exe, package_name)
+
+    pkg_path_str: str | None = data.get("path")  # type: ignore[assignment]
+    installed: list[str] = data.get("installed", [])  # type: ignore[assignment]
+
+    if pkg_path_str is None:
+        suggestions = difflib.get_close_matches(
+            package_name,
+            installed,
+            n=_SUGGESTION_MAX,
+            cutoff=_SUGGESTION_CUTOFF,
+        )
+        raise PackageNotFoundError(package_name, suggestions=suggestions)
+
+    pkg_path = Path(pkg_path_str)
+    metadata: dict[str, str | None] = {
+        "version": data.get("version"),  # type: ignore[dict-item]
+        "summary": data.get("summary"),  # type: ignore[dict-item]
+    }
+
+    # Check for compiled extension and stubs
+    stub_path: Path | None = None
+    if _is_compiled_extension(pkg_path):
+        stub_path = _find_stub_package(package_name)
+        if stub_path:
+            pkg_path = stub_path
+            stub_path = None
+            logger.info(
+                "Package '%s' has no Python source; using stubs as primary",
+                package_name,
+            )
+    else:
+        stub_path = _find_stub_package(package_name)
+        if stub_path:
+            logger.info(
+                "Stub package discovered for '%s' at %s",
+                package_name,
+                stub_path,
+            )
+
+    return pkg_path, metadata, stub_path
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -649,6 +718,7 @@ def collect_package(
     config_override: LibcontextConfig | None = None,
     no_cache: bool = False,
     env_tag: str | None = None,
+    target_python: Path | None = None,
 ) -> PackageInfo:
     """Collect complete API information for a Python package.
 
@@ -663,6 +733,11 @@ def collect_package(
         no_cache: Skip the disk cache (force fresh AST collection).
         env_tag: Environment identifier for cache namespacing (from
             ``--python``).
+        target_python: Resolved path to the target Python interpreter.
+            When provided, package discovery is delegated to this
+            interpreter via subprocess instead of using in-process
+            ``importlib``.  This prevents cross-version contamination
+            when the tool runs a different Python than the target.
 
     Returns:
         :class:`~libcontext.models.PackageInfo` with all collected data.
@@ -680,6 +755,14 @@ def collect_package(
         pkg_name = path.name if path.is_dir() else path.stem
         metadata: dict[str, str | None] = {}
         logger.debug("Resolved '%s' as local path: %s", package_name, pkg_path)
+    elif target_python is not None:
+        # Delegate discovery to the target interpreter to avoid
+        # cross-version importlib contamination.
+        pkg_path, metadata, stub_path = _resolve_via_target(
+            package_name, target_python,
+        )
+        pkg_name = package_name
+        logger.debug("Resolved '%s' via target interpreter: %s", package_name, pkg_path)
     else:
         pkg_path_resolved = find_package_path(package_name)
 

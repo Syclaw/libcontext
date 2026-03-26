@@ -24,6 +24,7 @@ import dataclasses
 import json
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -64,8 +65,9 @@ mcp = FastMCP(
 
 _CACHE_SIZE = 32
 
-# Set by main() at startup; used by _collect_cached for cache namespacing.
+# Set by main() at startup; used by _collect_cached for cache/discovery.
 _active_env_tag: str | None = None
+_active_target_python: Path | None = None
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
@@ -76,6 +78,7 @@ def _collect_cached(package_name: str, include_private: bool = False) -> Package
         include_private=include_private,
         include_readme=False,
         env_tag=_active_env_tag,
+        target_python=_active_target_python,
     )
 
 
@@ -317,11 +320,11 @@ def main() -> None:
     elif os.environ.get("LIBCONTEXT_PYTHON"):
         python_env = os.environ["LIBCONTEXT_PYTHON"]
 
-    global _active_env_tag
+    global _active_env_tag, _active_target_python
 
     from ._envsetup import setup_environment
 
-    _active_env_tag = setup_environment(python_env)
+    _active_env_tag, _active_target_python = setup_environment(python_env)
 
     mcp.run()
 

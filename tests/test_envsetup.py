@@ -14,6 +14,7 @@ from libcontext._envsetup import (
     env_tag_for_path,
     get_target_sys_path,
     inject_target_environment,
+    query_target_package,
     resolve_python_executable,
     setup_environment,
 )
@@ -106,6 +107,26 @@ def test_get_target_sys_path_returns_site_packages_not_stdlib():
         rp = os.path.realpath(p)
         if _under(rp, base) and not _under(rp, prefix):
             pytest.fail(f"base-interpreter stdlib path leaked: {p}")
+
+
+# ---------------------------------------------------------------------------
+# query_target_package
+# ---------------------------------------------------------------------------
+
+
+def test_query_target_package_finds_installed():
+    """Discovers a package known to be installed in the current interpreter."""
+    data = query_target_package(Path(sys.executable), "pytest")
+    assert data["path"] is not None
+    assert data["version"] is not None
+    assert isinstance(data["installed"], list)
+    assert len(data["installed"]) > 0
+
+
+def test_query_target_package_missing_returns_null_path():
+    """Returns null path for a package that does not exist."""
+    data = query_target_package(Path(sys.executable), "nonexistent_pkg_xyz")
+    assert data["path"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -297,22 +318,25 @@ def test_auto_detect_venv_ignores_dir_without_interpreter(tmp_path):
 
 
 def test_setup_environment_explicit_python():
-    """Explicit --python takes effect and returns an env_tag."""
-    tag = setup_environment(sys.executable)
+    """Explicit --python returns (env_tag, target_python)."""
+    tag, target = setup_environment(sys.executable)
     assert tag is not None
     assert len(tag) == 8
+    assert target is not None
+    assert target.is_file()
 
 
 @pytest.mark.usefixtures("_clean_venv_env")
 def test_setup_environment_no_venv_returns_none(tmp_path):
-    """No venv, no --python → returns None (no injection)."""
-    tag = setup_environment(None, cwd=tmp_path)
+    """No venv, no --python → returns (None, None)."""
+    tag, target = setup_environment(None, cwd=tmp_path)
     assert tag is None
+    assert target is None
 
 
 @pytest.mark.usefixtures("_clean_venv_env")
 def test_setup_environment_auto_detects(tmp_path, monkeypatch):
-    """Auto-detects .venv/ and returns an env_tag when using real interpreter."""
+    """Auto-detects .venv/ and returns (env_tag, target_python)."""
     # Point the fake venv at the real interpreter so subprocess works
     venv = tmp_path / ".venv"
     venv.mkdir()
@@ -320,19 +344,21 @@ def test_setup_environment_auto_detects(tmp_path, monkeypatch):
     if sys.platform == "win32":
         scripts = venv / "Scripts"
         scripts.mkdir()
-        target = scripts / "python.exe"
+        link = scripts / "python.exe"
     else:
         bin_dir = venv / "bin"
         bin_dir.mkdir()
-        target = bin_dir / "python"
+        link = bin_dir / "python"
 
     # Create a symlink (or copy) so the interpreter actually works
     try:
-        target.symlink_to(real_exe)
+        link.symlink_to(real_exe)
     except OSError:
         # Symlinks may require privileges on Windows; skip test
         pytest.skip("Cannot create symlink to Python interpreter")
 
-    tag = setup_environment(None, cwd=tmp_path)
+    tag, target = setup_environment(None, cwd=tmp_path)
     assert tag is not None
     assert len(tag) == 8
+    assert target is not None
+    assert target.is_file()

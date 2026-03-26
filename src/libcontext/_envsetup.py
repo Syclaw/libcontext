@@ -90,6 +90,53 @@ for p in sys.path:
 print(json.dumps(paths))
 """
 
+# Script executed in the *target* interpreter to discover a package.
+# Accepts the package name as sys.argv[1].  Returns a JSON object with
+# path, version, summary, and installed package names for suggestions.
+_PACKAGE_DISCOVERY_SCRIPT = """\
+import importlib.metadata, importlib.util, json, sys
+from pathlib import Path
+
+name = sys.argv[1]
+result = {"path": None, "version": None, "summary": None, "installed": []}
+
+# Locate the package source via find_spec
+try:
+    spec = importlib.util.find_spec(name)
+except (ModuleNotFoundError, ValueError, AttributeError):
+    spec = None
+
+if spec is not None:
+    if spec.origin and spec.origin != "frozen":
+        origin = Path(spec.origin)
+        result["path"] = str(origin.parent if origin.name == "__init__.py" else origin)
+    elif spec.submodule_search_locations:
+        locs = list(spec.submodule_search_locations)
+        if locs:
+            result["path"] = locs[0]
+
+# Retrieve metadata (version + summary)
+try:
+    meta = importlib.metadata.metadata(name)
+    result["version"] = meta.get("Version")
+    result["summary"] = meta.get("Summary")
+except importlib.metadata.PackageNotFoundError:
+    pass
+
+# Collect installed package names for typo suggestions
+installed = set()
+for dist in importlib.metadata.distributions():
+    dn = dist.metadata.get("Name")
+    if dn:
+        installed.add(dn)
+        norm = dn.replace("-", "_").lower()
+        if norm != dn:
+            installed.add(norm)
+result["installed"] = sorted(installed)
+
+print(json.dumps(result))
+"""
+
 
 def _has_python_interpreter(venv_dir: Path) -> bool:
     """Check whether a directory contains a recognisable Python interpreter."""
@@ -204,21 +251,27 @@ def setup_environment(
     python_arg: str | None = None,
     *,
     cwd: Path | None = None,
-) -> str | None:
-    """Set up the target environment for package discovery.
+) -> tuple[str | None, Path | None]:
+    """Resolve the target environment for package discovery.
 
     Implements the detection priority:
-    1. Explicit *python_arg* → inject that environment.
-    2. Auto-detected venv in *cwd* → inject it.
-    3. Neither → no injection (current process environment).
+    1. Explicit *python_arg* → use that environment.
+    2. Auto-detected venv in *cwd* → use it.
+    3. Neither → use the current process environment.
+
+    Returns the resolved interpreter path so that callers can delegate
+    package discovery to the target interpreter via subprocess, avoiding
+    cross-version ``importlib`` contamination when the tool and target
+    run different Python versions.
 
     Args:
         python_arg: Explicit ``--python`` value, or *None*.
         cwd: Working directory for auto-detection (defaults to CWD).
 
     Returns:
-        The env_tag for cache namespacing, or *None* if no injection
-        was performed.
+        A ``(env_tag, target_python)`` tuple.  Both are *None* when no
+        external environment was detected (i.e. the current process
+        environment is used).
 
     Raises:
         EnvironmentSetupError: If an explicit *python_arg* is invalid.
@@ -231,25 +284,75 @@ def setup_environment(
             target = str(detected)
 
     if target is None:
-        return None
+        return None, None
 
-    # Resolve once, reuse for both injection and tag computation
     python_exe = resolve_python_executable(target)
-    target_paths = get_target_sys_path(python_exe)
-
-    current_set = set(sys.path)
-    new_paths = [p for p in target_paths if p and p not in current_set]
-
-    sys.path[:0] = new_paths
-    importlib.invalidate_caches()
 
     logger.debug(
-        "Activated environment '%s': injected %d paths",
+        "Resolved target environment '%s' → '%s'",
         target,
-        len(new_paths),
+        python_exe,
     )
 
-    return _env_tag_from_resolved(python_exe)
+    return _env_tag_from_resolved(python_exe), python_exe
+
+
+def query_target_package(
+    python_exe: Path,
+    package_name: str,
+) -> dict[str, object]:
+    """Discover a package by running the target interpreter.
+
+    Delegates ``importlib.util.find_spec`` and
+    ``importlib.metadata.metadata`` to *python_exe* via subprocess,
+    keeping the tool process free from cross-version import
+    contamination.
+
+    Args:
+        python_exe: Absolute path to the target Python executable.
+        package_name: Package import name (e.g. ``openai``).
+
+    Returns:
+        Dict with keys ``path`` (str | None), ``version`` (str | None),
+        ``summary`` (str | None), ``installed`` (list[str]).
+
+    Raises:
+        EnvironmentSetupError: If the subprocess fails or times out.
+    """
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", _PACKAGE_DISCOVERY_SCRIPT, package_name],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise EnvironmentSetupError(
+            str(python_exe),
+            f"cannot execute interpreter: {exc}",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise EnvironmentSetupError(
+            str(python_exe),
+            f"interpreter timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s",
+        ) from exc
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()[:200]
+        raise EnvironmentSetupError(
+            str(python_exe),
+            f"package discovery failed (exit {result.returncode}): {stderr}",
+        )
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise EnvironmentSetupError(
+            str(python_exe),
+            f"cannot parse discovery output: {exc}",
+        ) from exc
+
+    return data  # type: ignore[no-any-return]
 
 
 def resolve_python_executable(python_arg: str) -> Path:

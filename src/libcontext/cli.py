@@ -259,7 +259,7 @@ def inspect(
     from ._envsetup import setup_environment
 
     try:
-        _env_tag = setup_environment(python_env)
+        _env_tag, _target_python = setup_environment(python_env)
     except EnvironmentSetupError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
@@ -278,6 +278,7 @@ def inspect(
                 config_override=config,
                 no_cache=no_cache,
                 env_tag=_env_tag,
+                target_python=_target_python,
             )
         except PackageNotFoundError as exc:
             click.echo(f"Error: {exc}", err=True)
