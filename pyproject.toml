@@ -48,6 +48,9 @@ packages = ["src/libcontext"]
 include_modules = []
 exclude_modules = []
 include_private = false
+# file_size_limit = 10485760   # 10 MiB — skip source files larger than this
+# output_char_limit = 0        # 0 = unlimited; set to e.g. 120000 for ~30k tokens
+# subprocess_timeout = 10      # seconds for target interpreter queries
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

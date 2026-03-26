@@ -362,11 +362,13 @@ def inspect(
                 if readme_lines is None:
                     readme_lines = 100
 
+                output_limit = config.output_char_limit if config else 0
                 rendered = render_package(
                     pkg_info,
                     include_readme=not no_readme,
                     max_readme_lines=readme_lines,
                     extra_context=config.extra_context if config else None,
+                    max_output_chars=output_limit,
                 )
 
             all_blocks.append((pkg_info.name, rendered))

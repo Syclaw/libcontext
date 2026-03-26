@@ -431,13 +431,15 @@ def _safe_rglob(root: Path, pattern: str) -> list[Path]:
     return results
 
 
-def _is_safe_source_file(file_path: Path, root: Path) -> bool:
+def _is_safe_source_file(
+    file_path: Path, root: Path, *, file_size_limit: int = 0
+) -> bool:
     """Check that a source file is safe to read.
 
     Rejects files that escape the package boundary via symlinks and
     files larger than the configured limit (likely generated data, not API).
     """
-    from ._security import check_file_size, is_within_boundary
+    from ._security import MAX_SOURCE_FILE_BYTES, check_file_size, is_within_boundary
 
     if not is_within_boundary(file_path, root):
         logger.warning(
@@ -446,7 +448,8 @@ def _is_safe_source_file(file_path: Path, root: Path) -> bool:
             root,
         )
         return False
-    if not check_file_size(file_path):
+    effective_limit = file_size_limit if file_size_limit > 0 else MAX_SOURCE_FILE_BYTES
+    if not check_file_size(file_path, limit=effective_limit):
         logger.warning("Skipped %s: exceeds source file size limit", file_path)
         return False
     return True
@@ -546,7 +549,9 @@ def _walk_package(
     for source_file in _safe_rglob(package_path, "*.py*"):
         if source_file.suffix not in (".py", ".pyi"):
             continue
-        if not _is_safe_source_file(source_file, package_path):
+        if not _is_safe_source_file(
+            source_file, package_path, file_size_limit=config.file_size_limit
+        ):
             continue
         relative = source_file.relative_to(package_path)
         parts = relative.parts
@@ -562,7 +567,9 @@ def _walk_package(
     # Standalone stub .pyi files
     if stub_path is not None:
         for pyi_file in _safe_rglob(stub_path, "*.pyi"):
-            if not _is_safe_source_file(pyi_file, stub_path):
+            if not _is_safe_source_file(
+                pyi_file, stub_path, file_size_limit=config.file_size_limit
+            ):
                 continue
             relative = pyi_file.relative_to(stub_path)
             parts = relative.parts
@@ -672,6 +679,8 @@ def _find_stub_package_fs(package_name: str, pkg_path: Path) -> Path | None:
 def _resolve_via_target(
     package_name: str,
     python_exe: Path,
+    *,
+    subprocess_timeout: int = 0,
 ) -> tuple[Path, dict[str, str | None], Path | None]:
     """Discover a package by querying the target interpreter.
 
@@ -681,6 +690,7 @@ def _resolve_via_target(
     Args:
         package_name: The importable package name.
         python_exe: Path to the target Python interpreter.
+        subprocess_timeout: Timeout in seconds (0 = use module default).
 
     Returns:
         A ``(pkg_path, metadata, stub_path)`` tuple.
@@ -690,7 +700,8 @@ def _resolve_via_target(
     """
     from ._envsetup import query_target_package
 
-    data = query_target_package(python_exe, package_name)
+    timeout_kw = {"timeout": subprocess_timeout} if subprocess_timeout > 0 else {}
+    data = query_target_package(python_exe, package_name, **timeout_kw)
 
     pkg_path_str: str | None = data.get("path")  # type: ignore[assignment]
     installed: list[str] = data.get("installed", [])  # type: ignore[assignment]
@@ -790,6 +801,9 @@ def collect_package(
         pkg_path, metadata, stub_path = _resolve_via_target(
             package_name,
             target_python,
+            subprocess_timeout=config_override.subprocess_timeout
+            if config_override
+            else 0,
         )
         pkg_name = package_name
         logger.debug("Resolved '%s' via target interpreter: %s", package_name, pkg_path)

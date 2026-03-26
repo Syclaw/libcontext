@@ -254,6 +254,8 @@ def setup_environment(
 def query_target_package(
     python_exe: Path,
     package_name: str,
+    *,
+    timeout: int | None = None,
 ) -> dict[str, object]:
     """Discover a package by running the target interpreter.
 
@@ -265,6 +267,8 @@ def query_target_package(
     Args:
         python_exe: Absolute path to the target Python executable.
         package_name: Package import name (e.g. ``openai``).
+        timeout: Subprocess timeout in seconds. Defaults to
+            ``_SUBPROCESS_TIMEOUT_SECONDS`` (10s).
 
     Returns:
         Dict with keys ``path`` (str | None), ``version`` (str | None),
@@ -273,12 +277,13 @@ def query_target_package(
     Raises:
         EnvironmentSetupError: If the subprocess fails or times out.
     """
+    effective_timeout = timeout or _SUBPROCESS_TIMEOUT_SECONDS
     try:
         result = subprocess.run(
             [str(python_exe), "-c", _PACKAGE_DISCOVERY_SCRIPT, package_name],
             capture_output=True,
             text=True,
-            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=effective_timeout,
         )
     except (FileNotFoundError, OSError) as exc:
         raise EnvironmentSetupError(
@@ -288,7 +293,7 @@ def query_target_package(
     except subprocess.TimeoutExpired as exc:
         raise EnvironmentSetupError(
             str(python_exe),
-            f"interpreter timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s",
+            f"interpreter timed out after {effective_timeout}s",
         ) from exc
 
     if result.returncode != 0:

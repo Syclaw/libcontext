@@ -35,6 +35,9 @@ class LibcontextConfig:
     include_private: bool = False
     extra_context: str | None = None
     max_readme_lines: int = 100
+    file_size_limit: int = 10 * 1024 * 1024  # 10 MiB
+    output_char_limit: int = 0  # 0 = unlimited (CLI default); MCP uses 120k
+    subprocess_timeout: int = 10
 
     @classmethod
     def from_dict(cls, data: dict) -> LibcontextConfig:
@@ -48,6 +51,9 @@ class LibcontextConfig:
         include_private = data.get("include_private", False)
         extra_context = data.get("extra_context")
         max_readme_lines = data.get("max_readme_lines", 100)
+        file_size_limit = data.get("file_size_limit", 10 * 1024 * 1024)
+        output_char_limit = data.get("output_char_limit", 0)
+        subprocess_timeout = data.get("subprocess_timeout", 10)
 
         # --- Type validation ---
         if not isinstance(include_modules, list):
@@ -77,12 +83,38 @@ class LibcontextConfig:
                 f"max_readme_lines must be non-negative, got {max_readme_lines}"
             )
 
+        for name, val in (
+            ("file_size_limit", file_size_limit),
+            ("subprocess_timeout", subprocess_timeout),
+        ):
+            if not isinstance(val, int) or isinstance(val, bool):
+                raise ConfigError(
+                    f"{name} must be an integer, got {type(val).__name__}"
+                )
+            if val <= 0:
+                raise ConfigError(f"{name} must be positive, got {val}")
+
+        if not isinstance(output_char_limit, int) or isinstance(
+            output_char_limit, bool
+        ):
+            raise ConfigError(
+                "output_char_limit must be an integer, "
+                f"got {type(output_char_limit).__name__}"
+            )
+        if output_char_limit < 0:
+            raise ConfigError(
+                f"output_char_limit must be non-negative, got {output_char_limit}"
+            )
+
         return cls(
             include_modules=include_modules,
             exclude_modules=exclude_modules,
             include_private=include_private,
             extra_context=extra_context,
             max_readme_lines=max_readme_lines,
+            file_size_limit=file_size_limit,
+            output_char_limit=output_char_limit,
+            subprocess_timeout=subprocess_timeout,
         )
 
 
