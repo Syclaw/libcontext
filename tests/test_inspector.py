@@ -1,7 +1,5 @@
 """Tests for the AST inspector module."""
 
-from __future__ import annotations
-
 import sys
 
 import pytest

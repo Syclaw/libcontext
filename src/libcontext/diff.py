@@ -1,7 +1,5 @@
 """API diff — compare two PackageInfo snapshots and identify changes."""
 
-from __future__ import annotations
-
 import logging
 
 from .models import (

@@ -5,8 +5,6 @@ rules from the optional ``[tool.libcontext]`` configuration, and returns a
 complete :class:`~libcontext.models.PackageInfo` data structure.
 """
 
-from __future__ import annotations
-
 import copy
 import difflib
 import importlib.metadata

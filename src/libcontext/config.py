@@ -14,8 +14,6 @@ Example configuration in pyproject.toml::
     max_readme_lines = 150
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 from dataclasses import dataclass, field
@@ -40,7 +38,7 @@ class LibcontextConfig:
     subprocess_timeout: int = 10
 
     @classmethod
-    def from_dict(cls, data: dict) -> LibcontextConfig:
+    def from_dict(cls, data: dict) -> "LibcontextConfig":
         """Create config from a dictionary (e.g. parsed TOML section).
 
         Raises:
@@ -144,7 +142,7 @@ def _load_toml(path: Path) -> dict:
         return {}
 
 
-def read_config_from_pyproject(pyproject_path: Path) -> LibcontextConfig:
+def read_config_from_pyproject(pyproject_path: Path) -> "LibcontextConfig":
     """Read libcontext config from a pyproject.toml file.
 
     Args:
@@ -161,7 +159,7 @@ def read_config_from_pyproject(pyproject_path: Path) -> LibcontextConfig:
     return LibcontextConfig.from_dict(tool_config)
 
 
-def find_config_for_package(package_path: Path) -> LibcontextConfig:
+def find_config_for_package(package_path: Path) -> "LibcontextConfig":
     """Search for libcontext configuration near a package directory.
 
     Looks for ``pyproject.toml`` in the package directory and up to two

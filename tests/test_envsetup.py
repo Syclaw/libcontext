@@ -1,7 +1,5 @@
 """Tests for the _envsetup module."""
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path

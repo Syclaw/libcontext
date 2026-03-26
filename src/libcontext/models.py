@@ -1,7 +1,5 @@
 """Data models for representing Python code components."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,7 +14,7 @@ class ParameterInfo:
     kind: str = "POSITIONAL_OR_KEYWORD"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ParameterInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "ParameterInfo":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -43,7 +41,7 @@ class FunctionInfo:
     line_number: int | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FunctionInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "FunctionInfo":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -71,7 +69,7 @@ class VariableInfo:
     is_type_alias: bool = False
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> VariableInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "VariableInfo":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -93,11 +91,11 @@ class ClassInfo:
     methods: list[FunctionInfo] = field(default_factory=list)
     class_variables: list[VariableInfo] = field(default_factory=list)
     decorators: list[str] = field(default_factory=list)
-    inner_classes: list[ClassInfo] = field(default_factory=list)
+    inner_classes: "list[ClassInfo]" = field(default_factory=list)
     line_number: int | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ClassInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "ClassInfo":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -131,7 +129,7 @@ class ModuleInfo:
     stub_source: str = ""  # "" | "colocated" | "standalone"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ModuleInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "ModuleInfo":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -162,7 +160,7 @@ class PackageInfo:
     modules: list[ModuleInfo] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PackageInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "PackageInfo":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -192,7 +190,7 @@ class VariableDiff:
     changes: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> VariableDiff:
+    def from_dict(cls, data: dict[str, Any]) -> "VariableDiff":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -210,7 +208,7 @@ class FunctionDiff:
     changes: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FunctionDiff:
+    def from_dict(cls, data: dict[str, Any]) -> "FunctionDiff":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -234,7 +232,7 @@ class ClassDiff:
     modified_variables: list[VariableDiff] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ClassDiff:
+    def from_dict(cls, data: dict[str, Any]) -> "ClassDiff":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             name=data["name"],
@@ -269,7 +267,7 @@ class ModuleDiff:
     modified_variables: list[VariableDiff] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ModuleDiff:
+    def from_dict(cls, data: dict[str, Any]) -> "ModuleDiff":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             module_name=data["module_name"],
@@ -303,7 +301,7 @@ class DiffResult:
     modified_modules: list[ModuleDiff] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DiffResult:
+    def from_dict(cls, data: dict[str, Any]) -> "DiffResult":
         """Reconstruct from a dict produced by ``dataclasses.asdict()``."""
         return cls(
             package_name=data["package_name"],

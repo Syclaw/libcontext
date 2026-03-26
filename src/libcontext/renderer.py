@@ -10,8 +10,6 @@ The output format prioritises:
 - Compact representation to maximise useful content within context limits
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from ._security import (

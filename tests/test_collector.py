@@ -1,7 +1,5 @@
 """Tests for the collector module."""
 
-from __future__ import annotations
-
 import logging
 import textwrap
 from pathlib import Path
@@ -1503,3 +1501,112 @@ def test_collect_default_limit_includes_normal(tmp_path: Path) -> None:
 
     names = [m.name for m in info.modules]
     assert "normpkg.mod" in names
+
+
+# ---------------------------------------------------------------------------
+# _get_installed_package_names: packages_distributions() failure fallback
+# ---------------------------------------------------------------------------
+
+
+def test_get_installed_package_names_fallback_on_exception(monkeypatch) -> None:
+    """Fallback via distributions() works when packages_distributions() raises."""
+    import sys
+
+    # Only relevant on 3.11+ where packages_distributions is called
+    if sys.version_info < (3, 11):
+        pytest.skip("packages_distributions only used on 3.11+")
+
+    with patch(
+        "libcontext.collector.importlib.metadata.packages_distributions",
+        side_effect=RuntimeError("corrupted metadata"),
+    ):
+        result = _get_installed_package_names()
+
+    # The fallback via distributions() should still return package names
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# _find_readme: metadata get_payload path
+# ---------------------------------------------------------------------------
+
+
+def test_find_readme_via_metadata_payload() -> None:
+    """_find_readme returns the long description from package metadata."""
+    mock_meta = MagicMock()
+    mock_meta.get_payload.return_value = "# Readme from metadata\n\nSome content."
+
+    with patch(
+        "libcontext.collector.importlib.metadata.metadata",
+        return_value=mock_meta,
+    ):
+        result = _find_readme("fakepkg_with_readme", None)
+
+    assert result is not None
+    assert "Readme from metadata" in result
+
+
+def test_find_readme_metadata_empty_payload_falls_through(tmp_path: Path) -> None:
+    """When metadata payload is empty, _find_readme falls through to file search."""
+    mock_meta = MagicMock()
+    mock_meta.get_payload.return_value = ""
+
+    pkg_dir = tmp_path / "mypkg"
+    pkg_dir.mkdir()
+    (tmp_path / "README.md").write_text("# File readme", encoding="utf-8")
+
+    with patch(
+        "libcontext.collector.importlib.metadata.metadata",
+        return_value=mock_meta,
+    ):
+        result = _find_readme("mypkg", pkg_dir)
+
+    assert result is not None
+    assert "File readme" in result
+
+
+# ---------------------------------------------------------------------------
+# _walk_package: module include/exclude filters
+# ---------------------------------------------------------------------------
+
+
+def test_walk_package_include_filter(tmp_path: Path) -> None:
+    """_walk_package respects include_modules filter from config."""
+    pkg = tmp_path / "walkpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Root."""', encoding="utf-8")
+    (pkg / "alpha.py").write_text(
+        'def a() -> None:\n    """Alpha."""\n    ...\n', encoding="utf-8"
+    )
+    (pkg / "beta.py").write_text(
+        'def b() -> None:\n    """Beta."""\n    ...\n', encoding="utf-8"
+    )
+
+    config = LibcontextConfig(include_modules=["walkpkg.alpha"])
+    modules = _walk_package(pkg, "walkpkg", config=config)
+
+    names = [m.name for m in modules]
+    assert "walkpkg" in names  # root always included
+    assert "walkpkg.alpha" in names
+    assert "walkpkg.beta" not in names
+
+
+def test_walk_package_exclude_filter(tmp_path: Path) -> None:
+    """_walk_package respects exclude_modules filter from config."""
+    pkg = tmp_path / "walkpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('"""Root."""', encoding="utf-8")
+    (pkg / "keep.py").write_text(
+        'def k() -> None:\n    """Keep."""\n    ...\n', encoding="utf-8"
+    )
+    (pkg / "drop.py").write_text(
+        'def d() -> None:\n    """Drop."""\n    ...\n', encoding="utf-8"
+    )
+
+    config = LibcontextConfig(exclude_modules=["walkpkg.drop"])
+    modules = _walk_package(pkg, "walkpkg", config=config)
+
+    names = [m.name for m in modules]
+    assert "walkpkg.keep" in names
+    assert "walkpkg.drop" not in names

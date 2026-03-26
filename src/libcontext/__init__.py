@@ -17,8 +17,6 @@ Or from the command line::
     libctx inspect requests -o .github/copilot-instructions.md
 """
 
-from __future__ import annotations
-
 import importlib.metadata
 import logging
 

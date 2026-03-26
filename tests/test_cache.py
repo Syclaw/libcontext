@@ -1,7 +1,5 @@
 """Tests for cache module."""
 
-from __future__ import annotations
-
 import json
 import time
 
@@ -544,3 +542,72 @@ def test_evict_oldest_oserror_during_stat(tmp_path):
 
     with patch.object(type(tmp_path / "dummy"), "stat", flaky_stat):
         _evict_oldest(tmp_path)  # Should not crash
+
+
+# ---------------------------------------------------------------------------
+# _compute_source_stats: OSError during stat
+# ---------------------------------------------------------------------------
+
+
+def test_compute_source_stats_oserror_during_stat(tmp_path):
+    """Files that raise OSError on stat are skipped."""
+    from unittest.mock import patch
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "good.py").write_text("# ok")
+    (pkg / "bad.py").write_text("# bad")
+
+    original_stat = type(tmp_path / "dummy").stat
+
+    def stat_raising(self):
+        if self.name == "bad.py":
+            raise OSError("disk error")
+        return original_stat(self)
+
+    with patch.object(type(tmp_path / "dummy"), "stat", stat_raising):
+        stats = _compute_source_stats(pkg)
+
+    assert stats.file_count == 1
+
+
+# ---------------------------------------------------------------------------
+# load: OSError when accessing cache directory
+# ---------------------------------------------------------------------------
+
+
+def test_load_oserror_on_cache_access(tmp_path, monkeypatch):
+    """load returns None when cache_file.is_file() raises OSError."""
+    from unittest.mock import patch as mock_patch
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "mod.py").write_text("# code")
+
+    # Make is_file() raise OSError
+    with mock_patch("libcontext.cache.Path.is_file", side_effect=OSError("no access")):
+        result = load("testpkg", "1.0.0", src_dir)
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# clear_all: OSError from glob
+# ---------------------------------------------------------------------------
+
+
+def test_clear_all_glob_oserror(tmp_path, monkeypatch):
+    """clear_all returns 0 when glob raises OSError."""
+    from unittest.mock import patch as mock_patch
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setattr("libcontext.cache.sys.platform", "linux")
+    _get_cache_dir()
+
+    with mock_patch("libcontext.cache.Path.glob", side_effect=OSError("bad")):
+        count = clear_all()
+
+    assert count == 0

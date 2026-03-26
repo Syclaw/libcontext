@@ -1,7 +1,5 @@
 """Tests for models — from_dict roundtrip and JSON envelope."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest

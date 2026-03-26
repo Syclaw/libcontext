@@ -1,7 +1,5 @@
 """Tests for the _security module."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from libcontext._security import (

@@ -5,8 +5,6 @@ so that security invariants are enforced in one place rather than scattered
 across modules.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

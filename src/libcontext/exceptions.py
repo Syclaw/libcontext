@@ -9,8 +9,6 @@ allowing callers to catch library errors selectively::
         ...  # any libcontext error
 """
 
-from __future__ import annotations
-
 
 class LibcontextError(Exception):
     """Base exception for all libcontext errors."""

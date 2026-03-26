@@ -5,8 +5,6 @@ unchanged packages.  Invalidation uses ``(version, max_mtime, file_count)``
 to detect source changes.
 """
 
-from __future__ import annotations
-
 import contextlib
 import dataclasses
 import datetime

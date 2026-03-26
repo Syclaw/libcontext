@@ -19,8 +19,6 @@ Detection priority:
 7. Neither → use the current process's environment (no delegation).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os

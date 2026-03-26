@@ -5,8 +5,6 @@ components: classes, functions, variables, type hints, and docstrings.
 This approach is safe (no code execution) and works with any valid Python source.
 """
 
-from __future__ import annotations
-
 import ast
 import logging
 from pathlib import Path

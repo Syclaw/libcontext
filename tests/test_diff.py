@@ -1,7 +1,5 @@
 """Tests for diff module."""
 
-from __future__ import annotations
-
 from libcontext.diff import diff_packages
 from libcontext.models import (
     ClassInfo,

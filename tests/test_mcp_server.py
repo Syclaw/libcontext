@@ -4,8 +4,6 @@ These tests exercise the tool logic directly (not via MCP protocol),
 using mock PackageInfo data to avoid depending on installed packages.
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import patch
 
