@@ -490,34 +490,32 @@ def _get_skill_content() -> str:
         or any non-Python library. If the requested package is not a Python
         package, inform the user and stop — do not attempt inspection.
 
+        ## Prerequisites
+
+        If the project uses uv, prefix all commands with `uv run`.
+        The examples below omit the prefix for brevity.
+
         ## Workflow
 
         ### Step 1 — Verify installation
 
-        Run `pip show $ARGUMENTS` (or `uv run pip show $ARGUMENTS`) to confirm
-        the package is installed and note its version.
-
-        If not installed, inform the user and stop.
+        Run `pip show <package>` to confirm the package is installed and note
+        its version. If not installed, inform the user and stop.
 
         ### Step 2 — Get structural overview
 
-        If the project has a `.venv/` or `venv/` directory, libctx auto-detects it.
-        If auto-detection fails (e.g. non-standard venv location), pass `--python`:
         ```
-        libctx inspect $ARGUMENTS --overview -q --python /path/to/.venv
-        ```
-
-        Standard case (auto-detection):
-        ```
-        libctx inspect $ARGUMENTS --overview -q
+        libctx inspect <package> --overview -q
         ```
 
         This returns module names with class/function names (no signatures).
         Present this overview to understand the package shape.
 
+        If libctx cannot find the package (e.g. non-standard venv location),
+        pass `--python /path/to/.venv` to point it at the right environment.
+
         ### Step 3 — Drill into relevant modules
 
-        Based on the task at hand, request detailed API for specific modules:
         ```
         libctx inspect <package> --module <module_name> -q
         ```
@@ -527,37 +525,23 @@ def _get_skill_content() -> str:
 
         ### Step 4 — Search when needed
 
-        If looking for a specific class, function, or method:
         ```
         libctx inspect <package> --search <query> -q
         ```
 
-        This searches across all modules by name and docstring (case-insensitive).
+        Searches across all modules by name and docstring (case-insensitive).
 
         To narrow results by type, add `--type`:
         ```
         libctx inspect <package> --search <query> --type class -q
-        libctx inspect <package> --search <query> --type function -q
         ```
 
         Valid types: `class`, `function`, `variable`, `alias`.
 
-        ### Step 5 — JSON and diff (advanced)
+        ### Step 5 — JSON output (advanced)
 
-        For structured output suitable for comparison or programmatic use:
-        ```
-        libctx inspect <package> --format json -q
-        libctx inspect <package> --module <module_name> --format json -q
-        libctx inspect <package> --search <query> --format json -q
-        ```
-
-        To compare API versions after a package upgrade:
-        ```
-        libctx inspect <package> --format json -q > old.json
-        # ... upgrade the package ...
-        libctx inspect <package> --format json -q > new.json
-        libctx diff old.json new.json
-        ```
+        Add `--format json` to any inspect command for structured output.
+        Use `libctx diff old.json new.json` to compare API snapshots.
 
         ## Rules
 
@@ -565,14 +549,13 @@ def _get_skill_content() -> str:
           as the full output may be very large and saturate context.
         - Request at most 2-3 modules per invocation cycle. If more are needed,
           summarize what was learned so far, then request the next batch.
-        - Use `-q` flag to suppress stderr noise.
+        - Always use `-q` to suppress stderr noise.
         - If the user specifies a module directly (e.g., `/lib requests requests.auth`),
           skip the overview and go straight to `--module`.
-        - If a signature from the overview doesn't match what the code expects,
-          the package may have been updated. Add `--no-cache` to force a fresh scan:
-          `libctx inspect <package> --module <module_name> --no-cache -q`
+        - If a signature doesn't match what the code expects, add `--no-cache`
+          to force a fresh scan.
         - Use `--type` with `--search` to reduce noise when you know what kind of
-          symbol you need (e.g., `--type class` when looking for a class).
+          symbol you need.
 
         ## Safety limits
 
