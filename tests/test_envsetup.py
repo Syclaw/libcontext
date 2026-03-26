@@ -82,8 +82,8 @@ def test_get_target_sys_path_bad_executable(tmp_path):
         get_target_sys_path(fake)
 
 
-def test_get_target_sys_path_excludes_base_stdlib_in_venv():
-    """Stdlib paths from the base interpreter are excluded when in a venv."""
+def test_get_target_sys_path_returns_site_packages_not_stdlib():
+    """Returns site-packages paths and excludes base-interpreter stdlib."""
     paths = get_target_sys_path(Path(sys.executable))
 
     base = os.path.realpath(sys.base_prefix)
@@ -91,14 +91,20 @@ def test_get_target_sys_path_excludes_base_stdlib_in_venv():
     if prefix == base:
         pytest.skip("not running inside a venv")
 
-    # Paths under the base Python installation (stdlib, lib-dynload, etc.)
-    # must be excluded to prevent cross-version contamination.
-    # Paths under the venv prefix itself (e.g. site-packages) are kept.
+    # At least one site-packages directory must be present.
+    assert any("site-packages" in p for p in paths), (
+        f"no site-packages found in returned paths: {paths}"
+    )
+
+    # No path should resolve under the base Python installation
+    # (stdlib, lib-dynload, zip archives) unless it is also under
+    # the venv prefix.
+    def _under(child: str, root: str) -> bool:
+        return child == root or child.startswith(root + os.sep)
+
     for p in paths:
         rp = os.path.realpath(p)
-        is_under_base = rp.startswith(base + os.sep) or rp == base
-        is_under_venv = rp.startswith(prefix + os.sep) or rp == prefix
-        if is_under_base and not is_under_venv:
+        if _under(rp, base) and not _under(rp, prefix):
             pytest.fail(f"base-interpreter stdlib path leaked: {p}")
 
 

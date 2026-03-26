@@ -46,6 +46,50 @@ _INTERPRETER_CANDIDATES = (
     Path("bin") / "python3",  # Unix alternative
 )
 
+# Script executed in the *target* interpreter to collect site-packages
+# directories.  Kept as a module constant so it can be tested directly.
+# Uses only stdlib modules guaranteed present in Python 3.9+.
+_SITE_PACKAGES_SCRIPT = """\
+import json, site, sys, os
+
+paths = []
+
+# site-packages directories (includes system site-packages when the
+# venv was created with --system-site-packages)
+try:
+    paths.extend(site.getsitepackages())
+except AttributeError:
+    pass
+
+# User site-packages (e.g. ~/.local/lib/python3.x/site-packages),
+# honoured only when ENABLE_USER_SITE is not explicitly disabled.
+if site.ENABLE_USER_SITE:
+    try:
+        user = site.getusersitepackages()
+        if isinstance(user, str):
+            paths.append(user)
+    except AttributeError:
+        pass
+
+# .pth files in site-packages can inject arbitrary paths into sys.path
+# (editable installs, namespace packages, etc.).  Collect them by
+# diffing sys.path against site-packages — any path that is not a
+# site-packages dir and not under sys.base_prefix is .pth-injected.
+site_set = set(os.path.realpath(p) for p in paths)
+base = os.path.realpath(sys.base_prefix)
+for p in sys.path:
+    if not p:
+        continue
+    rp = os.path.realpath(p)
+    if rp in site_set:
+        continue
+    if rp == base or rp.startswith(base + os.sep):
+        continue
+    paths.append(p)
+
+print(json.dumps(paths))
+"""
+
 
 def _has_python_interpreter(venv_dir: Path) -> bool:
     """Check whether a directory contains a recognisable Python interpreter."""
@@ -262,44 +306,26 @@ def resolve_python_executable(python_arg: str) -> Path:
 
 
 def get_target_sys_path(python_exe: Path) -> list[str]:
-    """Query a Python interpreter for its non-stdlib ``sys.path`` entries.
+    """Query a target interpreter for its package-discovery paths.
 
-    Runs the interpreter in a subprocess with a short timeout to
-    extract site-packages and user-added paths.  Stdlib paths are
-    excluded to prevent cross-version import contamination when the
-    tool interpreter differs from the target (e.g. tool on 3.13,
-    target venv on 3.11).
+    Collects site-packages directories (including system site-packages
+    for ``--system-site-packages`` venvs), user site-packages, and
+    any paths injected by ``.pth`` files (editable installs, namespace
+    packages).  Stdlib paths are **excluded** to prevent cross-version
+    import contamination when tool and target run different Python
+    versions.
 
     Args:
         python_exe: Absolute path to the target Python executable.
 
     Returns:
-        List of non-stdlib path strings from the target interpreter.
+        List of path strings suitable for prepending to ``sys.path``
+        in the tool process.
 
     Raises:
         EnvironmentSetupError: If the subprocess fails or times out.
     """
-    # Filter out stdlib paths from the target interpreter's sys.path.
-    # When the target runs a different Python version from the tool,
-    # injecting stdlib paths causes C-extension mismatches (e.g.
-    # Python 3.13 loading csv.py from 3.11 stdlib → _csv ImportError).
-    script = (
-        "import json, os, sys\n"
-        "base = os.path.realpath(sys.base_prefix)\n"
-        "prefix = os.path.realpath(sys.prefix)\n"
-        "in_venv = prefix != base\n"
-        "def _under(p, root):\n"
-        "    return p == root or p.startswith(root + os.sep)\n"
-        "paths = [\n"
-        "    p for p in sys.path\n"
-        "    if p and not (\n"
-        "        in_venv\n"
-        "        and _under(os.path.realpath(p), base)\n"
-        "        and not _under(os.path.realpath(p), prefix)\n"
-        "    )\n"
-        "]\n"
-        "print(json.dumps(paths))\n"
-    )
+    script = _SITE_PACKAGES_SCRIPT
     try:
         result = subprocess.run(
             [str(python_exe), "-c", script],
