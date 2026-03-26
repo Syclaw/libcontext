@@ -262,22 +262,44 @@ def resolve_python_executable(python_arg: str) -> Path:
 
 
 def get_target_sys_path(python_exe: Path) -> list[str]:
-    """Query a Python interpreter for its ``sys.path``.
+    """Query a Python interpreter for its non-stdlib ``sys.path`` entries.
 
     Runs the interpreter in a subprocess with a short timeout to
-    extract the full search path, including ``.pth`` expansions and
-    site-packages.
+    extract site-packages and user-added paths.  Stdlib paths are
+    excluded to prevent cross-version import contamination when the
+    tool interpreter differs from the target (e.g. tool on 3.13,
+    target venv on 3.11).
 
     Args:
         python_exe: Absolute path to the target Python executable.
 
     Returns:
-        List of path strings from the target interpreter's ``sys.path``.
+        List of non-stdlib path strings from the target interpreter.
 
     Raises:
         EnvironmentSetupError: If the subprocess fails or times out.
     """
-    script = "import sys, json; print(json.dumps(sys.path))"
+    # Filter out stdlib paths from the target interpreter's sys.path.
+    # When the target runs a different Python version from the tool,
+    # injecting stdlib paths causes C-extension mismatches (e.g.
+    # Python 3.13 loading csv.py from 3.11 stdlib → _csv ImportError).
+    script = (
+        "import json, os, sys\n"
+        "base = os.path.realpath(sys.base_prefix)\n"
+        "prefix = os.path.realpath(sys.prefix)\n"
+        "in_venv = prefix != base\n"
+        "def _under(p, root):\n"
+        "    return p == root or p.startswith(root + os.sep)\n"
+        "paths = [\n"
+        "    p for p in sys.path\n"
+        "    if p and not (\n"
+        "        in_venv\n"
+        "        and _under(os.path.realpath(p), base)\n"
+        "        and not _under(os.path.realpath(p), prefix)\n"
+        "    )\n"
+        "]\n"
+        "print(json.dumps(paths))\n"
+    )
     try:
         result = subprocess.run(
             [str(python_exe), "-c", script],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -79,6 +80,26 @@ def test_get_target_sys_path_bad_executable(tmp_path):
 
     with pytest.raises(EnvironmentSetupError):
         get_target_sys_path(fake)
+
+
+def test_get_target_sys_path_excludes_base_stdlib_in_venv():
+    """Stdlib paths from the base interpreter are excluded when in a venv."""
+    paths = get_target_sys_path(Path(sys.executable))
+
+    base = os.path.realpath(sys.base_prefix)
+    prefix = os.path.realpath(sys.prefix)
+    if prefix == base:
+        pytest.skip("not running inside a venv")
+
+    # Paths under the base Python installation (stdlib, lib-dynload, etc.)
+    # must be excluded to prevent cross-version contamination.
+    # Paths under the venv prefix itself (e.g. site-packages) are kept.
+    for p in paths:
+        rp = os.path.realpath(p)
+        is_under_base = rp.startswith(base + os.sep) or rp == base
+        is_under_venv = rp.startswith(prefix + os.sep) or rp == prefix
+        if is_under_base and not is_under_venv:
+            pytest.fail(f"base-interpreter stdlib path leaked: {p}")
 
 
 # ---------------------------------------------------------------------------
