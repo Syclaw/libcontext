@@ -12,6 +12,9 @@ Example configuration in pyproject.toml::
     include_private = false
     extra_context = "This library uses the repository pattern for data access."
     max_readme_lines = 150
+    file_size_limit = 10485760
+    output_char_limit = 120000
+    subprocess_timeout = 30
 """
 
 import logging

@@ -11,7 +11,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 ### Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (recommended installer: `pip install uv` or see [installation docs](https://docs.astral.sh/uv/getting-started/installation/))
-- Python 3.9 or later
+- Python 3.10 or later
 - Git
 
 ### Setting Up Your Development Environment

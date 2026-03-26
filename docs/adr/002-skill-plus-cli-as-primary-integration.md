@@ -30,7 +30,7 @@ A skill (`.claude/skills/lib/SKILL.md` or `.github/skills/lib/SKILL.md`) instruc
 - Zero external dependencies beyond the CLI itself.
 - Works in any environment that allows shell commands — no MCP infrastructure needed.
 - Skills are static Markdown files checked into the repository. No running process, no attack surface.
-- Compatible with Python 3.9+.
+- Compatible with Python 3.10+.
 
 **Disadvantages:**
 - Bash tool calls have no typed interface — the LLM constructs command strings.
@@ -70,7 +70,7 @@ MCP is offered as an optional extra (`pip install libcontext[mcp]`) for environm
 
 ## MCP as Optional Dependency
 
-The MCP server (`libctx-mcp`) depends on `mcp[cli]`, which requires Python 3.10+ and pulls in transitive dependencies (HTTP server, JSON-RPC, Pydantic). Since the core library targets Python 3.9+, MCP is an optional extra:
+The MCP server (`libctx-mcp`) depends on `mcp[cli]`, which requires Python 3.10+ and pulls in transitive dependencies (HTTP server, JSON-RPC, Pydantic). Since the core library targets Python 3.10+, MCP is an optional extra:
 
 - Installed via `pip install libcontext[mcp]`.
 - `pyproject.toml` declares: `mcp = ["mcp[cli]>=1.0; python_version >= '3.10'"]`.
@@ -97,7 +97,7 @@ The `/lib` skill template is embedded as a string in `cli.py` (`_get_skill_conte
 ## Consequences
 
 - **Positive.** Works in enterprise environments that block MCP.
-- **Positive.** No additional runtime dependencies for the primary path. Core functionality works on Python 3.9.
+- **Positive.** No additional runtime dependencies for the primary path. Core functionality works on Python 3.10+.
 - **Positive.** The skill file is a single Markdown file — easy to audit, version, and customize.
 - **Positive.** MCP users are not excluded — they install the optional extra.
 - **Negative.** The skill-based path relies on the LLM correctly constructing CLI commands. Mitigated by providing explicit command templates in the skill body.

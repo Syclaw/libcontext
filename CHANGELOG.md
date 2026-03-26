@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configurable `file_size_limit`, `output_char_limit`, and `subprocess_timeout`
   in `[tool.libcontext]` configuration section.
 - CLI output now respects `output_char_limit` for consistency with MCP server.
+- `LIBCONTEXT_OUTPUT_CHAR_LIMIT` environment variable for MCP server truncation
+  limit override.
+- Usage examples in `libctx inspect --help` and `libctx diff --help`.
 - CI enforces minimum 90% code coverage via `--cov-fail-under`.
 
 ### Changed
@@ -26,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI matrix updated to test Python 3.10-3.13 only.
 - Enabled `warn_unused_ignores` in mypy configuration; removed stale
   `type: ignore` comments.
-- Test coverage raised from 93% to 95% (54 new tests).
+- Removed `from __future__ import annotations` from all files (no longer
+  needed with Python >=3.10 floor).
+- Test coverage raised from 93% to 96% (63 new tests, 549 total).
 
 ## [0.7.0] - 2026-03-25
 
