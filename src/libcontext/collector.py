@@ -759,7 +759,8 @@ def collect_package(
         # Delegate discovery to the target interpreter to avoid
         # cross-version importlib contamination.
         pkg_path, metadata, stub_path = _resolve_via_target(
-            package_name, target_python,
+            package_name,
+            target_python,
         )
         pkg_name = package_name
         logger.debug("Resolved '%s' via target interpreter: %s", package_name, pkg_path)
