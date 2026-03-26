@@ -317,11 +317,17 @@ def resolve_python_executable(python_arg: str) -> Path:
     in the standard locations (``Scripts/python.exe`` on Windows,
     ``bin/python`` on Unix).
 
+    Returns an absolute path **without following symlinks**.  This is
+    critical for venv interpreters: Python discovers ``pyvenv.cfg``
+    relative to the symlink location, not the symlink target.  Following
+    the symlink would resolve to a global interpreter that lacks the
+    venv's ``site-packages``.
+
     Args:
         python_arg: Path to a Python interpreter or venv directory.
 
     Returns:
-        Resolved absolute path to the Python executable.
+        Absolute path to the Python executable (symlinks preserved).
 
     Raises:
         EnvironmentSetupError: If the path does not exist or no
@@ -337,7 +343,7 @@ def resolve_python_executable(python_arg: str) -> Path:
 
     # Direct path to an executable
     if path.is_file():
-        return path.resolve()
+        return path.absolute()
 
     # Directory — probe for interpreter
     if path.is_dir():
@@ -348,7 +354,7 @@ def resolve_python_executable(python_arg: str) -> Path:
                     python_arg,
                     candidate,
                 )
-                return candidate.resolve()
+                return candidate.absolute()
 
         raise EnvironmentSetupError(
             python_arg,

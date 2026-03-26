@@ -22,9 +22,9 @@ from libcontext.exceptions import EnvironmentSetupError
 
 
 def test_resolve_direct_interpreter():
-    """Passing the current interpreter returns its resolved path."""
+    """Passing the current interpreter returns an absolute path."""
     result = resolve_python_executable(sys.executable)
-    assert result == Path(sys.executable).resolve()
+    assert result == Path(sys.executable).absolute()
 
 
 def test_resolve_venv_directory(tmp_path):
@@ -40,7 +40,30 @@ def test_resolve_venv_directory(tmp_path):
 
     exe.write_text("fake", encoding="utf-8")
     result = resolve_python_executable(str(tmp_path))
-    assert result == exe.resolve()
+    assert result == exe.absolute()
+
+
+def test_resolve_preserves_symlink(tmp_path):
+    """Symlinked interpreter must not be resolved to the target."""
+    if sys.platform == "win32":
+        scripts = tmp_path / "Scripts"
+        scripts.mkdir()
+        link = scripts / "python.exe"
+    else:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        link = bin_dir / "python"
+
+    real_exe = Path(sys.executable)
+    try:
+        link.symlink_to(real_exe)
+    except OSError:
+        pytest.skip("Cannot create symlink")
+
+    result = resolve_python_executable(str(link))
+    # Must return the symlink path, not the resolved target
+    assert result == link.absolute()
+    assert result != real_exe.resolve()
 
 
 def test_resolve_nonexistent_raises():
