@@ -470,9 +470,12 @@ def _get_skill_content() -> str:
         ---
         name: lib
         description: >-
-          Load API reference for any installed Python library.
-          Use when working with an unfamiliar, niche, or recently
-          updated Python package that may not be in training data.
+          Inspect the API of an installed Python package with libcontext/libctx.
+          Use when you need to understand how to use a library, dependency, SDK,
+          client, framework, or package that is unfamiliar, niche, recently
+          updated, poorly documented, or not reliable in model memory. Trigger
+          for requests like: "check the package API", "inspect this dependency",
+          "find the right class/function", or "look up how this library works".
         argument-hint: "<package> [module] [--search query]"
         ---
 
@@ -498,7 +501,13 @@ def _get_skill_content() -> str:
 
         ### Step 2 — Get structural overview
 
-        Run:
+        If the project has a `.venv/` or `venv/` directory, libctx auto-detects it.
+        If auto-detection fails (e.g. non-standard venv location), pass `--python`:
+        ```
+        libctx inspect $ARGUMENTS --overview -q --python /path/to/.venv
+        ```
+
+        Standard case (auto-detection):
         ```
         libctx inspect $ARGUMENTS --overview -q
         ```
