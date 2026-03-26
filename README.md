@@ -20,9 +20,9 @@ LLMs can often use popular libraries correctly from training data alone. For wel
 - **Niche open-source packages** — Sparse or outdated training data leads to hallucinated methods and wrong signatures. GPT-4o achieves only 38% valid invocations on low-frequency APIs ([Amazon Science, ICSE 2025](https://www.amazon.science/publications/on-mitigating-code-llm-hallucinations-with-api-documentation)).
 - **New versions of any library** — Training data has a cutoff. The model knows v2, you're using v3.
 
-Even when an LLM could read source files directly, structured API summaries are more context-efficient: providing API documentation via retrieval improves pass rates by 83–220% compared to no documentation, while consuming far fewer tokens than raw source code ([arXiv 2503.15231, March 2025](https://arxiv.org/abs/2503.15231)).
+Even when an LLM could read source files directly, structured API summaries are more context-efficient: on niche libraries (Polars, Ibis, GeoPandas, Ivy), providing API documentation via retrieval improves pass rates by 83–220% compared to no documentation, while consuming far fewer tokens than raw source code ([arXiv 2503.15231, March 2025](https://arxiv.org/abs/2503.15231)).
 
-Dumping entire API references into always-on instruction files wastes context window on every interaction. Selective retrieval outperforms always-on injection — always-on docs actually hurt performance on well-known APIs ([Amazon Science, ICSE 2025](https://www.amazon.science/publications/on-mitigating-code-llm-hallucinations-with-api-documentation)).
+Dumping entire API references into always-on instruction files wastes context window on every interaction. Selective retrieval outperforms always-on injection — indiscriminate documentation retrieval causes up to a 39% absolute performance drop on well-known APIs where the model already has strong training data ([Amazon Science, ICSE 2025](https://www.amazon.science/publications/on-mitigating-code-llm-hallucinations-with-api-documentation)).
 
 libcontext addresses this with **progressive disclosure**: overview first, then drill into specific modules only when needed.
 
@@ -31,15 +31,15 @@ libcontext addresses this with **progressive disclosure**: overview first, then 
 | Scenario | Impact | Why |
 |---|---|---|
 | **Internal / private libraries** | Critical | Zero training data — the model has never seen the API |
-| **Niche open-source packages** | High | Sparse training data; 19.7% of LLM package suggestions are hallucinated ([USENIX Security 2025](https://www.usenix.org/publications/loginonline/we-have-package-you-comprehensive-analysis-package-hallucinations-code)) |
+| **Niche open-source packages** | High | Sparse training data; across 16 LLMs, 19.7% of generated package imports reference hallucinated packages — 5.2% for commercial models, 21.7% for open-source ([USENIX Security 2025](https://www.usenix.org/publications/loginonline/we-have-package-you-comprehensive-analysis-package-hallucinations-code)) |
 | **New versions of any library** | High | Training cutoff — the LLM knows v2, you're using v3 |
 | **Popular, stable libraries** | Low | The LLM already has good knowledge from training data — libcontext adds little here |
 
 ### What libcontext does NOT do
 
 - **Replace reading source code** — LLMs with tool access (Claude Code, Cursor) can read files directly. For popular libraries, that's often sufficient.
-- **Guarantee correctness** — Even with perfect API docs, LLMs still make errors. Research shows pass rates of 74–91% with target documentation, not 100% ([arXiv 2503.15231](https://arxiv.org/abs/2503.15231)).
-- **Provide usage examples** — libcontext extracts signatures and docstrings, not example code. Research indicates examples have the highest impact on code generation quality.
+- **Guarantee correctness** — Even with perfect API docs, LLMs still make errors. Research shows pass rates of 48–92% with target documentation depending on the model, not 100% ([arXiv 2503.15231](https://arxiv.org/abs/2503.15231)).
+- **Provide usage examples** — libcontext extracts signatures and docstrings, not example code. Research shows example code has the highest impact on generation quality — removing examples causes the largest performance drops ([arXiv 2503.15231](https://arxiv.org/abs/2503.15231)).
 
 ## Quick Start
 
@@ -304,6 +304,7 @@ All async operations use httpx internally.
 | `cache.py` | Persistent disk cache with mtime/file-count invalidation and LRU eviction |
 | `cli.py` | CLI entry point — `inspect`, `install`, `diff`, and `cache` subcommands |
 | `mcp_server.py` | MCP server for Claude Code / VS Code / Cursor integration (optional) |
+| `_security.py` | Input sanitisation, path boundary validation, output size guards |
 
 ## Development
 
