@@ -8,8 +8,6 @@ The MCP-only tool ``refresh_cache`` is intentionally excluded — it is a
 session-level concern with no CLI equivalent (the CLI is stateless).
 """
 
-from __future__ import annotations
-
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -304,3 +302,93 @@ class TestErrorParity:
             )
 
         assert "not found" in result
+
+
+class TestDiffParity:
+    """CLI diff and MCP diff_api both report the same added symbols."""
+
+    @pytest.fixture()
+    def diff_packages_pair(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Create two package versions: v1 with greet(), v2 adds farewell()."""
+        v1 = tmp_path / "v1" / "diffpkg"
+        v1.mkdir(parents=True)
+        (v1 / "__init__.py").write_text(
+            textwrap.dedent('''
+            """Diff test package v1."""
+
+            __version__ = "1.0.0"
+            '''),
+            encoding="utf-8",
+        )
+        (v1 / "core.py").write_text(
+            textwrap.dedent('''
+            """Core module."""
+
+            def greet(name: str) -> str:
+                """Say hello."""
+                return f"Hello {name}"
+            '''),
+            encoding="utf-8",
+        )
+
+        v2 = tmp_path / "v2" / "diffpkg"
+        v2.mkdir(parents=True)
+        (v2 / "__init__.py").write_text(
+            textwrap.dedent('''
+            """Diff test package v2."""
+
+            __version__ = "2.0.0"
+            '''),
+            encoding="utf-8",
+        )
+        (v2 / "core.py").write_text(
+            textwrap.dedent('''
+            """Core module."""
+
+            def greet(name: str) -> str:
+                """Say hello."""
+                return f"Hello {name}"
+
+            def farewell(name: str) -> str:
+                """Say goodbye."""
+                return f"Bye {name}"
+            '''),
+            encoding="utf-8",
+        )
+        return v1, v2
+
+    def test_both_mention_added_function(
+        self, tmp_path: Path, diff_packages_pair: tuple[Path, Path]
+    ) -> None:
+        import dataclasses
+        import json as json_mod
+
+        from libcontext.models import _serialize_envelope
+
+        v1_path, v2_path = diff_packages_pair
+
+        old_pkg = collect_package(str(v1_path), include_readme=False)
+        new_pkg = collect_package(str(v2_path), include_readme=False)
+
+        old_envelope = _serialize_envelope(dataclasses.asdict(old_pkg))
+        new_envelope = _serialize_envelope(dataclasses.asdict(new_pkg))
+
+        old_json_str = json_mod.dumps(old_envelope)
+        new_json_str = json_mod.dumps(new_envelope)
+
+        # Write JSON files for CLI diff
+        old_file = tmp_path / "old.json"
+        new_file = tmp_path / "new.json"
+        old_file.write_text(old_json_str, encoding="utf-8")
+        new_file.write_text(new_json_str, encoding="utf-8")
+
+        # CLI diff
+        runner = CliRunner()
+        cli_result = runner.invoke(main, ["diff", str(old_file), str(new_file)])
+        assert cli_result.exit_code == 0, f"CLI diff failed: {cli_result.output}"
+
+        # MCP diff
+        mcp_result = mcp_server.diff_api(old_json_str, new_json_str)
+
+        assert "farewell" in cli_result.output
+        assert "farewell" in mcp_result
