@@ -1,11 +1,12 @@
-"""Environment setup — resolve and activate a target Python environment.
+"""Environment setup — resolve a target Python environment.
 
 When libcontext is installed globally (e.g. via ``uv tool install``), it
 runs inside its own isolated venv and cannot see packages from a project's
 ``.venv``.  This module auto-detects a project venv in the current working
-directory, or accepts an explicit ``--python`` override, and injects the
-target environment's paths into ``sys.path`` so that :mod:`importlib`
-discovery works against the target environment.
+directory, or accepts an explicit ``--python`` override, and resolves the
+target interpreter.  Package discovery is then delegated to the target
+interpreter via subprocess (see :func:`query_target_package`), keeping the
+tool process free from cross-version import contamination.
 
 Detection priority:
 1. Explicit ``--python`` argument → use that environment.
@@ -15,19 +16,15 @@ Detection priority:
 5. ``.venv/`` or ``venv/`` in CWD → use the detected venv.
 6. ``uv`` fallback: if CWD has ``pyproject.toml``, query ``uv`` for the
    project interpreter.
-7. Neither → use the current process's environment (no injection).
+7. Neither → use the current process's environment (no delegation).
 """
 
 from __future__ import annotations
 
-import importlib
 import json
 import logging
 import os
 import subprocess
-import sys
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 
 from .exceptions import EnvironmentSetupError
@@ -46,49 +43,6 @@ _INTERPRETER_CANDIDATES = (
     Path("bin") / "python3",  # Unix alternative
 )
 
-# Script executed in the *target* interpreter to collect site-packages
-# directories.  Kept as a module constant so it can be tested directly.
-# Uses only stdlib modules guaranteed present in Python 3.9+.
-_SITE_PACKAGES_SCRIPT = """\
-import json, site, sys, os
-
-paths = []
-
-# site-packages directories (includes system site-packages when the
-# venv was created with --system-site-packages)
-try:
-    paths.extend(site.getsitepackages())
-except AttributeError:
-    pass
-
-# User site-packages (e.g. ~/.local/lib/python3.x/site-packages),
-# honoured only when ENABLE_USER_SITE is not explicitly disabled.
-if site.ENABLE_USER_SITE:
-    try:
-        user = site.getusersitepackages()
-        if isinstance(user, str):
-            paths.append(user)
-    except AttributeError:
-        pass
-
-# .pth files in site-packages can inject arbitrary paths into sys.path
-# (editable installs, namespace packages, etc.).  Collect them by
-# diffing sys.path against site-packages — any path that is not a
-# site-packages dir and not under sys.base_prefix is .pth-injected.
-site_set = set(os.path.realpath(p) for p in paths)
-base = os.path.realpath(sys.base_prefix)
-for p in sys.path:
-    if not p:
-        continue
-    rp = os.path.realpath(p)
-    if rp in site_set:
-        continue
-    if rp == base or rp.startswith(base + os.sep):
-        continue
-    paths.append(p)
-
-print(json.dumps(paths))
-"""
 
 # Script executed in the *target* interpreter to discover a package.
 # Accepts the package name as sys.argv[1].  Returns a JSON object with
@@ -405,146 +359,6 @@ def resolve_python_executable(python_arg: str) -> Path:
     raise EnvironmentSetupError(
         python_arg,
         f"path is neither a file nor a directory: {python_arg}",
-    )
-
-
-def get_target_sys_path(python_exe: Path) -> list[str]:
-    """Query a target interpreter for its package-discovery paths.
-
-    Collects site-packages directories (including system site-packages
-    for ``--system-site-packages`` venvs), user site-packages, and
-    any paths injected by ``.pth`` files (editable installs, namespace
-    packages).  Stdlib paths are **excluded** to prevent cross-version
-    import contamination when tool and target run different Python
-    versions.
-
-    Args:
-        python_exe: Absolute path to the target Python executable.
-
-    Returns:
-        List of path strings suitable for prepending to ``sys.path``
-        in the tool process.
-
-    Raises:
-        EnvironmentSetupError: If the subprocess fails or times out.
-    """
-    script = _SITE_PACKAGES_SCRIPT
-    try:
-        result = subprocess.run(
-            [str(python_exe), "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
-        )
-    except (FileNotFoundError, OSError) as exc:
-        raise EnvironmentSetupError(
-            str(python_exe),
-            f"cannot execute interpreter: {exc}",
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise EnvironmentSetupError(
-            str(python_exe),
-            f"interpreter timed out after {_SUBPROCESS_TIMEOUT_SECONDS}s",
-        ) from exc
-
-    if result.returncode != 0:
-        stderr = result.stderr.strip()[:200]
-        raise EnvironmentSetupError(
-            str(python_exe),
-            f"interpreter exited with code {result.returncode}: {stderr}",
-        )
-
-    try:
-        paths = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise EnvironmentSetupError(
-            str(python_exe),
-            f"cannot parse sys.path output: {exc}",
-        ) from exc
-
-    if not isinstance(paths, list):
-        raise EnvironmentSetupError(
-            str(python_exe),
-            "sys.path output is not a list",
-        )
-
-    return [str(p) for p in paths]
-
-
-@contextmanager
-def activate_environment(python_arg: str) -> Generator[Path, None, None]:
-    """Temporarily inject a target environment's paths into the process.
-
-    Resolves the Python executable, queries its ``sys.path``, prepends
-    the target paths to the current ``sys.path``, and invalidates
-    :mod:`importlib` caches so that :func:`importlib.util.find_spec`
-    and :func:`importlib.metadata.distributions` pick up the target
-    environment's packages.
-
-    The original ``sys.path`` is restored on exit.
-
-    Args:
-        python_arg: Path to a Python interpreter or venv directory.
-
-    Yields:
-        The resolved Python executable path.
-
-    Raises:
-        EnvironmentSetupError: If the environment cannot be resolved
-            or queried.
-    """
-    python_exe = resolve_python_executable(python_arg)
-    target_paths = get_target_sys_path(python_exe)
-
-    # Filter to paths that actually exist and aren't already present
-    current_set = set(sys.path)
-    new_paths = [p for p in target_paths if p and p not in current_set]
-
-    saved_path = sys.path.copy()
-    try:
-        # Prepend target paths so they take priority
-        sys.path[:0] = new_paths
-        importlib.invalidate_caches()
-
-        logger.debug(
-            "Activated environment '%s': injected %d paths",
-            python_arg,
-            len(new_paths),
-        )
-        yield python_exe
-    finally:
-        sys.path[:] = saved_path
-        importlib.invalidate_caches()
-        logger.debug("Restored original sys.path")
-
-
-def inject_target_environment(python_arg: str) -> None:
-    """Inject a target environment's paths into the current process.
-
-    Unlike :func:`activate_environment`, this does **not** restore
-    ``sys.path`` afterward.  Suitable for CLI entry points where the
-    process exits after the command completes.
-
-    Args:
-        python_arg: Path to a Python interpreter or venv directory.
-
-    Raises:
-        EnvironmentSetupError: If the environment cannot be resolved
-            or queried.
-    """
-    python_exe = resolve_python_executable(python_arg)
-    target_paths = get_target_sys_path(python_exe)
-
-    current_set = set(sys.path)
-    new_paths = [p for p in target_paths if p and p not in current_set]
-
-    sys.path[:0] = new_paths
-    importlib.invalidate_caches()
-
-    logger.debug(
-        "Injected environment '%s': added %d paths",
-        python_arg,
-        len(new_paths),
     )
 
 

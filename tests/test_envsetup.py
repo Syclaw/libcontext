@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 from libcontext._envsetup import (
-    activate_environment,
     auto_detect_venv,
     env_tag_for_path,
-    get_target_sys_path,
-    inject_target_environment,
     query_target_package,
     resolve_python_executable,
     setup_environment,
@@ -60,56 +56,6 @@ def test_resolve_empty_directory_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# get_target_sys_path
-# ---------------------------------------------------------------------------
-
-
-def test_get_target_sys_path_current_interpreter():
-    """Querying the current interpreter returns a non-empty path list."""
-    paths = get_target_sys_path(Path(sys.executable))
-    assert isinstance(paths, list)
-    assert len(paths) > 0
-    assert all(isinstance(p, str) for p in paths)
-
-
-def test_get_target_sys_path_bad_executable(tmp_path):
-    """A non-Python executable raises EnvironmentSetupError."""
-    fake = tmp_path / "not_python"
-    fake.write_text("not a python interpreter", encoding="utf-8")
-    if sys.platform != "win32":
-        fake.chmod(0o755)
-
-    with pytest.raises(EnvironmentSetupError):
-        get_target_sys_path(fake)
-
-
-def test_get_target_sys_path_returns_site_packages_not_stdlib():
-    """Returns site-packages paths and excludes base-interpreter stdlib."""
-    paths = get_target_sys_path(Path(sys.executable))
-
-    base = os.path.realpath(sys.base_prefix)
-    prefix = os.path.realpath(sys.prefix)
-    if prefix == base:
-        pytest.skip("not running inside a venv")
-
-    # At least one site-packages directory must be present.
-    assert any("site-packages" in p for p in paths), (
-        f"no site-packages found in returned paths: {paths}"
-    )
-
-    # No path should resolve under the base Python installation
-    # (stdlib, lib-dynload, zip archives) unless it is also under
-    # the venv prefix.
-    def _under(child: str, root: str) -> bool:
-        return child == root or child.startswith(root + os.sep)
-
-    for p in paths:
-        rp = os.path.realpath(p)
-        if _under(rp, base) and not _under(rp, prefix):
-            pytest.fail(f"base-interpreter stdlib path leaked: {p}")
-
-
-# ---------------------------------------------------------------------------
 # query_target_package
 # ---------------------------------------------------------------------------
 
@@ -129,45 +75,21 @@ def test_query_target_package_missing_returns_null_path():
     assert data["path"] is None
 
 
-# ---------------------------------------------------------------------------
-# inject_target_environment
-# ---------------------------------------------------------------------------
+def test_query_target_package_returns_installed_names():
+    """The installed list contains distribution names for suggestions."""
+    data = query_target_package(Path(sys.executable), "pytest")
+    assert "pytest" in data["installed"]
 
 
-def test_inject_target_environment_adds_paths():
-    """Injecting the current interpreter adds its paths to sys.path."""
-    original_len = len(sys.path)
-    # Inject the current interpreter (should be mostly a no-op since
-    # paths already overlap, but validates the mechanics)
-    inject_target_environment(sys.executable)
-    assert len(sys.path) >= original_len
+def test_query_target_package_bad_executable(tmp_path):
+    """A non-Python executable raises EnvironmentSetupError."""
+    fake = tmp_path / "not_python"
+    fake.write_text("not a python interpreter", encoding="utf-8")
+    if sys.platform != "win32":
+        fake.chmod(0o755)
 
-
-# ---------------------------------------------------------------------------
-# activate_environment (context manager)
-# ---------------------------------------------------------------------------
-
-
-def test_activate_environment_restores_path():
-    """sys.path is restored after the context manager exits."""
-    saved = sys.path.copy()
-    with activate_environment(sys.executable):
-        pass
-    assert sys.path == saved
-
-
-def test_activate_environment_restores_on_exception():
-    """sys.path is restored even if an exception occurs."""
-    saved = sys.path.copy()
-    with pytest.raises(RuntimeError), activate_environment(sys.executable):
-        raise RuntimeError("boom")
-    assert sys.path == saved
-
-
-def test_activate_environment_bad_path():
-    """EnvironmentSetupError propagates from the context manager."""
-    with pytest.raises(EnvironmentSetupError), activate_environment("/no/such/env"):
-        pass
+    with pytest.raises(EnvironmentSetupError):
+        query_target_package(fake, "anything")
 
 
 # ---------------------------------------------------------------------------
