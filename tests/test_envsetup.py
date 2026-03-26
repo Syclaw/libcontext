@@ -313,6 +313,7 @@ def test_setup_environment_auto_detects(tmp_path, monkeypatch):
 # _detect_venv_via_uv (tested through auto_detect_venv)
 # ---------------------------------------------------------------------------
 
+
 def _setup_pyproject_only(tmp_path: Path) -> None:
     """Create a pyproject.toml but no .venv/ or venv/ directories."""
     (tmp_path / "pyproject.toml").write_text(
@@ -427,10 +428,13 @@ def test_query_target_package_raises_on_timeout():
     """Timeout during package discovery raises EnvironmentSetupError."""
     fake_exe = Path("/usr/bin/python3")
 
-    with patch(
-        "libcontext._envsetup.subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd="python", timeout=10),
-    ), pytest.raises(EnvironmentSetupError, match="timed out"):
+    with (
+        patch(
+            "libcontext._envsetup.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="python", timeout=10),
+        ),
+        pytest.raises(EnvironmentSetupError, match="timed out"),
+    ):
         query_target_package(fake_exe, "some-pkg")
 
 
@@ -438,9 +442,7 @@ def test_query_target_package_raises_on_nonzero_returncode():
     """Non-zero exit from the subprocess raises EnvironmentSetupError."""
     fake_exe = Path("/usr/bin/python3")
 
-    mock_result = MagicMock(
-        returncode=1, stderr="ImportError: no module", stdout=""
-    )
+    mock_result = MagicMock(returncode=1, stderr="ImportError: no module", stdout="")
     with (
         patch("libcontext._envsetup.subprocess.run", return_value=mock_result),
         pytest.raises(EnvironmentSetupError, match="exit 1"),

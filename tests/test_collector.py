@@ -1386,13 +1386,9 @@ def test_resolve_via_target_passes_timeout() -> None:
         "installed": [],
     }
     with patch(_QUERY_TARGET_PATH, return_value=query_result) as mock_query:
-        _resolve_via_target(
-            "mypkg", Path("/usr/bin/python3"), subprocess_timeout=30
-        )
+        _resolve_via_target("mypkg", Path("/usr/bin/python3"), subprocess_timeout=30)
 
-    mock_query.assert_called_once_with(
-        Path("/usr/bin/python3"), "mypkg", timeout=30
-    )
+    mock_query.assert_called_once_with(Path("/usr/bin/python3"), "mypkg", timeout=30)
 
 
 def test_resolve_via_target_zero_timeout_omits_kwarg() -> None:
@@ -1453,9 +1449,7 @@ def test_resolve_via_target_compiled_uses_stubs_as_primary(tmp_path: Path) -> No
         "installed": [],
     }
     with patch(_QUERY_TARGET_PATH, return_value=query_result):
-        pkg_path, _, stub_path = _resolve_via_target(
-            "mypkg", Path("/usr/bin/python3")
-        )
+        pkg_path, _, stub_path = _resolve_via_target("mypkg", Path("/usr/bin/python3"))
 
     assert pkg_path == stubs
     assert stub_path is None
